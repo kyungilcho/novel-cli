@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use novel_core::{
-    Result, NoteStatusFilter, Priority, add_note, edit_note_text, list_notes, mark_note_done,
+    NoteStatusFilter, Priority, Result, add_note, edit_note_text, list_notes, mark_note_done,
     remove_note_by_id, set_note_priority,
 };
 
