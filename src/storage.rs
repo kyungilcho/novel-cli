@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{fs, io::ErrorKind, path::Path};
 
 use crate::error::Result;
 use crate::note::Note;
@@ -17,6 +17,16 @@ pub fn load_notes() -> Result<Vec<Note>> {
 
 pub fn save_notes(notes: &[Note]) -> Result<()> {
     let raw = serde_json::to_string_pretty(notes)?;
-    fs::write(NOTES_FILE, raw)?;
+    let notes_path = Path::new(NOTES_FILE);
+    let tmp_path = notes_path.with_extension("json.tmp");
+
+    match fs::remove_file(&tmp_path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+
+    fs::write(&tmp_path, raw)?;
+    fs::rename(&tmp_path, notes_path)?;
     Ok(())
 }
