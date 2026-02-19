@@ -4,6 +4,7 @@ use std::{fmt, io};
 pub enum AppError {
     Io(io::Error),
     Json(serde_json::Error),
+    InvalidId(u64),
 }
 
 impl fmt::Display for AppError {
@@ -11,6 +12,7 @@ impl fmt::Display for AppError {
         match self {
             AppError::Io(e) => write!(f, "IO error: {}", e),
             AppError::Json(e) => write!(f, "JSON error: {}", e),
+            AppError::InvalidId(id) => write!(f, "Invalid ID: {}", id),
         }
     }
 }

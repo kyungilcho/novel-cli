@@ -1,7 +1,7 @@
 mod error;
 
 use clap::{Parser, Subcommand};
-use error::Result;
+use error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Parser)]
@@ -16,6 +16,8 @@ struct Cli {
 enum Commands {
     Add { text: String },
     List,
+    Done { id: u64 },
+    Remove { id: u64 },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,6 +62,26 @@ fn run() -> Result<()> {
                     println!("[{}] {}: {}", mark, note.id, note.text);
                 }
             }
+        }
+        Commands::Done { id } => {
+            let note = notes
+                .iter_mut()
+                .find(|n| n.id == id)
+                .ok_or(AppError::InvalidId(id))?;
+
+            note.done = true;
+            save_notes(&notes)?;
+            println!("marked Note #{} as done", id);
+        }
+        Commands::Remove { id } => {
+            let idx = notes
+                .iter()
+                .position(|n| n.id == id)
+                .ok_or(AppError::InvalidId(id))?;
+
+            notes.remove(idx);
+            save_notes(&notes)?;
+            println!("removed Note #{}", id);
         }
     }
 
