@@ -5,6 +5,7 @@ pub enum AppError {
     Io(io::Error),
     Json(serde_json::Error),
     InvalidId(u64),
+    Sql(rusqlite::Error),
 }
 
 impl fmt::Display for AppError {
@@ -13,6 +14,7 @@ impl fmt::Display for AppError {
             AppError::Io(e) => write!(f, "IO error: {}", e),
             AppError::Json(e) => write!(f, "JSON error: {}", e),
             AppError::InvalidId(id) => write!(f, "Invalid ID: {}", id),
+            AppError::Sql(e) => write!(f, "SQL error: {}", e),
         }
     }
 }
@@ -28,6 +30,12 @@ impl From<io::Error> for AppError {
 impl From<serde_json::Error> for AppError {
     fn from(value: serde_json::Error) -> Self {
         AppError::Json(value)
+    }
+}
+
+impl From<rusqlite::Error> for AppError {
+    fn from(value: rusqlite::Error) -> Self {
+        AppError::Sql(value)
     }
 }
 

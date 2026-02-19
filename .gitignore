@@ -1,2 +1,5 @@
 /target
 notes.json
+notes.db
+notes.db-*
+notes.json.migrated
