@@ -58,3 +58,51 @@ fn invalid_id() {
         .failure()
         .stderr(predicate::str::contains("error: Invalid ID: 999"));
 }
+
+#[test]
+fn filter_notes() {
+    let dir = tempdir().unwrap();
+    let run = |args: &[&str]| run_in(dir.path(), args);
+
+    run(&["add", "first"]).success();
+    run(&["add", "second"]).success();
+    run(&["add", "third"]).success();
+
+    run(&["done", "2"]).success();
+
+    run(&["list"]).success().stdout(
+        predicate::str::contains("[ ] 1: first")
+            .and(predicate::str::contains("[x] 2: second"))
+            .and(predicate::str::contains("[ ] 3: third")),
+    );
+
+    run(&["list", "--done"]).success().stdout(
+        predicate::str::contains("[x] 2: second")
+            .and(predicate::str::contains("[ ] 1: first").not())
+            .and(predicate::str::contains("[ ] 3: third").not()),
+    );
+
+    run(&["list", "--todo"]).success().stdout(
+        predicate::str::contains("[ ] 1: first")
+            .and(predicate::str::contains("[x] 2: second").not())
+            .and(predicate::str::contains("[ ] 3: third")),
+    );
+
+    run(&["list", "--contains", "second"]).success().stdout(
+        predicate::str::contains("[x] 2: second")
+            .and(predicate::str::contains("[ ] 1: first").not())
+            .and(predicate::str::contains("[ ] 3: third").not()),
+    );
+
+    run(&["list", "--done", "--contains", "second"])
+        .success()
+        .stdout(
+            predicate::str::contains("[x] 2: second")
+                .and(predicate::str::contains("[ ] 1: first").not())
+                .and(predicate::str::contains("[ ] 3: third").not()),
+        );
+
+    run(&["list", "--todo", "--contains", "second"])
+        .success()
+        .stdout(predicate::str::contains("No notes found."));
+}

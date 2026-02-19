@@ -4,8 +4,10 @@ mod storage;
 
 use clap::{Parser, Subcommand};
 use error::Result;
-use note::{Note, edit_note, mark_done, next_note_id, remove_note};
+use note::{Note, NoteStatusFilter, edit_note, mark_done, next_note_id, remove_note};
 use storage::{load_notes, save_notes};
+
+use crate::note::filter_notes;
 
 #[derive(Parser)]
 #[command(name = "novel-cli")]
@@ -16,11 +18,29 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    Add { text: String },
-    List,
-    Done { id: u64 },
-    Remove { id: u64 },
-    Edit { id: u64, text: String },
+    Add {
+        text: String,
+    },
+    List {
+        #[arg(long, conflicts_with = "todo")]
+        done: bool,
+
+        #[arg(long, conflicts_with = "done")]
+        todo: bool,
+
+        #[arg(long)]
+        contains: Option<String>,
+    },
+    Done {
+        id: u64,
+    },
+    Remove {
+        id: u64,
+    },
+    Edit {
+        id: u64,
+        text: String,
+    },
 }
 
 fn main() {
@@ -54,11 +74,25 @@ fn run() -> Result<()> {
             save_notes(&notes)?;
             println!("edited Note #{}", id);
         }
-        Commands::List => {
-            if notes.is_empty() {
+        Commands::List {
+            done,
+            todo,
+            contains,
+        } => {
+            let status = if done {
+                NoteStatusFilter::Done
+            } else if todo {
+                NoteStatusFilter::Todo
+            } else {
+                NoteStatusFilter::All
+            };
+
+            let filtered_notes = filter_notes(&notes, status, contains.as_deref());
+
+            if filtered_notes.is_empty() {
                 println!("No notes found.");
             } else {
-                for note in notes {
+                for note in filtered_notes {
                     let mark = if note.done { "x" } else { " " };
                     println!("[{}] {}: {}", mark, note.id, note.text);
                 }

@@ -42,6 +42,34 @@ pub fn remove_note(notes: &mut Vec<Note>, id: u64) -> Result<()> {
     Ok(())
 }
 
+pub enum NoteStatusFilter {
+    All,
+    Done,
+    Todo,
+}
+
+pub fn filter_notes<'a>(
+    notes: &'a [Note],
+    status: NoteStatusFilter,
+    contains: Option<&str>,
+) -> Vec<&'a Note> {
+    notes
+        .iter()
+        .filter(|n| {
+            let status_match = match status {
+                NoteStatusFilter::All => true,
+                NoteStatusFilter::Done => n.done,
+                NoteStatusFilter::Todo => !n.done,
+            };
+            let contains_match = match contains {
+                Some(text) => n.text.contains(text),
+                None => true,
+            };
+            status_match && contains_match
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,6 +87,11 @@ mod tests {
                 text: "second".to_string(),
                 done: false,
             },
+            Note {
+                id: 3,
+                text: "third".to_string(),
+                done: true,
+            },
         ]
     }
 
@@ -73,7 +106,7 @@ mod tests {
     #[test]
     fn next_note_id_increments_last_id() {
         let notes = sample_notes();
-        assert_eq!(next_note_id(&notes), 3);
+        assert_eq!(next_note_id(&notes), 4);
     }
 
     // Marking a valid ID as done should set its done field to true.
@@ -106,5 +139,29 @@ mod tests {
         let mut notes = sample_notes();
         let error = edit_note(&mut notes, 99, "xx".to_string()).unwrap_err();
         assert!(matches!(error, AppError::InvalidId(99)));
+    }
+
+    // done filter should only return done notes
+    #[test]
+    fn filter_notes_done() {
+        let notes = sample_notes();
+        let filtered_notes = filter_notes(&notes, NoteStatusFilter::Done, None);
+        assert_eq!(filtered_notes.len(), 1);
+    }
+
+    // todo filter should only return todo notes
+    #[test]
+    fn filter_notes_todo() {
+        let notes = sample_notes();
+        let filtered_notes = filter_notes(&notes, NoteStatusFilter::Todo, None);
+        assert_eq!(filtered_notes.len(), 2);
+    }
+
+    // contains filter should only return notes that contain the given text
+    #[test]
+    fn filter_notes_contains() {
+        let notes = sample_notes();
+        let filtered_notes = filter_notes(&notes, NoteStatusFilter::All, Some("second"));
+        assert_eq!(filtered_notes.len(), 1);
     }
 }
