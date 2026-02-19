@@ -5,7 +5,7 @@ use diesel::sqlite::SqliteConnection;
 use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl, sql_query};
 
 use crate::error::{AppError, Result};
-use crate::note::{Note, NoteStatusFilter};
+use crate::note::{Note, NoteStatusFilter, Priority};
 use crate::schema::notes;
 use crate::schema::notes::dsl as notes_dsl;
 
@@ -72,6 +72,32 @@ fn run_migrations(conn: &mut SqliteConnection) -> Result<()> {
         sql_query("INSERT INTO schema_migrations (version) VALUES (3)").execute(conn)?;
     }
 
+    if current < 4 {
+        sql_query("UPDATE notes SET priority = 0 WHERE priority < 0 OR priority > 5")
+            .execute(conn)?;
+        sql_query(
+            "CREATE TRIGGER IF NOT EXISTS notes_priority_check_insert
+                BEFORE INSERT ON notes
+                FOR EACH ROW
+                WHEN NEW.priority < 0 OR NEW.priority > 5
+            BEGIN
+                SELECT RAISE(ABORT, 'priority must be between 0 and 5');
+            END",
+        )
+        .execute(conn)?;
+        sql_query(
+            "CREATE TRIGGER IF NOT EXISTS notes_priority_check_update
+                BEFORE UPDATE ON notes
+                FOR EACH ROW
+                WHEN NEW.priority < 0 OR NEW.priority > 5
+            BEGIN
+                SELECT RAISE(ABORT, 'priority must be between 0 and 5');
+            END",
+        )
+        .execute(conn)?;
+        sql_query("INSERT INTO schema_migrations (version) VALUES (4)").execute(conn)?;
+    }
+
     Ok(())
 }
 
@@ -92,12 +118,13 @@ fn migrate_legacy_json_if_needed(conn: &mut SqliteConnection) -> Result<()> {
 
     conn.transaction::<_, AppError, _>(|tx| {
         for note in &legacy_notes {
+            let priority = Priority::try_from(note.priority)?.value();
             diesel::insert_into(notes::table)
                 .values((
                     notes_dsl::id.eq(note.id as i64),
                     notes_dsl::text.eq(&note.text),
                     notes_dsl::done.eq(note.done),
-                    notes_dsl::priority.eq(note.priority),
+                    notes_dsl::priority.eq(priority),
                     notes_dsl::created_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
                         "CURRENT_TIMESTAMP",
                     )),
@@ -120,18 +147,18 @@ fn migrate_legacy_json_if_needed(conn: &mut SqliteConnection) -> Result<()> {
     Ok(())
 }
 
-pub fn add_note(text_input: &str) -> Result<u64> {
+pub fn add_note(text_input: &str, priority: Priority) -> Result<u64> {
     let mut conn = open_connection()?;
 
     diesel::insert_into(notes::table)
         .values((
             notes_dsl::text.eq(text_input),
             notes_dsl::done.eq(false),
-            notes_dsl::priority.eq(0_i64),
+            notes_dsl::priority.eq(priority.value()),
             notes_dsl::created_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
                 "CURRENT_TIMESTAMP",
             )),
-            notes_dsl::created_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
+            notes_dsl::updated_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
                 "CURRENT_TIMESTAMP",
             )),
         ))
@@ -145,7 +172,11 @@ pub fn add_note(text_input: &str) -> Result<u64> {
     Ok(new_id as u64)
 }
 
-pub fn list_notes(status: NoteStatusFilter, contains: Option<&str>) -> Result<Vec<Note>> {
+pub fn list_notes(
+    status: NoteStatusFilter,
+    contains: Option<&str>,
+    priority: Option<Priority>,
+) -> Result<Vec<Note>> {
     let mut conn = open_connection()?;
 
     let mut query = notes_dsl::notes
@@ -172,6 +203,10 @@ pub fn list_notes(status: NoteStatusFilter, contains: Option<&str>) -> Result<Ve
         query = query.filter(notes_dsl::text.like(pattern));
     }
 
+    if let Some(priority) = priority {
+        query = query.filter(notes_dsl::priority.ge(priority.value()));
+    }
+
     let rows: Vec<(i64, String, bool, i64)> = query.order(notes_dsl::id.asc()).load(&mut conn)?;
 
     let notes = rows
@@ -194,7 +229,7 @@ pub fn mark_note_done(target_id: u64) -> Result<()> {
     let changed = diesel::update(notes_dsl::notes.filter(notes_dsl::id.eq(db_id)))
         .set((
             notes_dsl::done.eq(true),
-            notes_dsl::created_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
+            notes_dsl::updated_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
                 "CURRENT_TIMESTAMP",
             )),
         ))
@@ -214,7 +249,7 @@ pub fn edit_note_text(target_id: u64, new_text: &str) -> Result<()> {
     let changed = diesel::update(notes_dsl::notes.filter(notes_dsl::id.eq(db_id)))
         .set((
             notes_dsl::text.eq(new_text),
-            notes_dsl::created_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
+            notes_dsl::updated_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
                 "CURRENT_TIMESTAMP",
             )),
         ))
@@ -233,6 +268,26 @@ pub fn remove_note_by_id(target_id: u64) -> Result<()> {
 
     let changed =
         diesel::delete(notes_dsl::notes.filter(notes_dsl::id.eq(db_id))).execute(&mut conn)?;
+
+    if changed == 0 {
+        return Err(AppError::InvalidId(target_id));
+    }
+
+    Ok(())
+}
+
+pub fn set_note_priority(target_id: u64, priority: Priority) -> Result<()> {
+    let mut conn = open_connection()?;
+    let db_id = i64::try_from(target_id).map_err(|_| AppError::InvalidId(target_id))?;
+
+    let changed = diesel::update(notes_dsl::notes.filter(notes_dsl::id.eq(db_id)))
+        .set((
+            notes_dsl::priority.eq(priority.value()),
+            notes_dsl::updated_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
+                "CURRENT_TIMESTAMP",
+            )),
+        ))
+        .execute(&mut conn)?;
 
     if changed == 0 {
         return Err(AppError::InvalidId(target_id));

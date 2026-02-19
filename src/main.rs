@@ -5,8 +5,10 @@ mod storage;
 
 use clap::{Parser, Subcommand};
 use error::Result;
-use note::NoteStatusFilter;
-use storage::{add_note, edit_note_text, list_notes, mark_note_done, remove_note_by_id};
+use note::{NoteStatusFilter, Priority};
+use storage::{
+    add_note, edit_note_text, list_notes, mark_note_done, remove_note_by_id, set_note_priority,
+};
 
 #[derive(Parser)]
 #[command(name = "novel-cli")]
@@ -19,6 +21,8 @@ struct Cli {
 enum Commands {
     Add {
         text: String,
+        #[arg(long, default_value_t = 0)]
+        priority: i64,
     },
     List {
         #[arg(long, conflicts_with = "todo")]
@@ -29,6 +33,9 @@ enum Commands {
 
         #[arg(long)]
         contains: Option<String>,
+
+        #[arg(long)]
+        priority: Option<i64>,
     },
     Done {
         id: u64,
@@ -39,6 +46,10 @@ enum Commands {
     Edit {
         id: u64,
         text: String,
+    },
+    Priority {
+        id: u64,
+        priority: i64,
     },
 }
 
@@ -53,8 +64,9 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Add { text } => {
-            let id = add_note(&text)?;
+        Commands::Add { text, priority } => {
+            let priority = Priority::try_from(priority)?;
+            let id = add_note(&text, priority)?;
 
             println!("adding Note #{}", id);
         }
@@ -66,6 +78,7 @@ fn run() -> Result<()> {
             done,
             todo,
             contains,
+            priority,
         } => {
             let status = if done {
                 NoteStatusFilter::Done
@@ -75,14 +88,19 @@ fn run() -> Result<()> {
                 NoteStatusFilter::All
             };
 
-            let filtered_notes = list_notes(status, contains.as_deref())?;
+            let priority = match priority {
+                Some(value) => Some(Priority::try_from(value)?),
+                None => None,
+            };
+
+            let filtered_notes = list_notes(status, contains.as_deref(), priority)?;
 
             if filtered_notes.is_empty() {
                 println!("No notes found.");
             } else {
                 for note in filtered_notes {
                     let mark = if note.done { "x" } else { " " };
-                    println!("[{}] {}: {}", mark, note.id, note.text);
+                    println!("[{}] P{}: {} {}", mark, note.priority, note.id, note.text);
                 }
             }
         }
@@ -93,6 +111,11 @@ fn run() -> Result<()> {
         Commands::Remove { id } => {
             remove_note_by_id(id)?;
             println!("removed Note #{}", id);
+        }
+        Commands::Priority { id, priority } => {
+            let priority = Priority::try_from(priority)?;
+            set_note_priority(id, priority)?;
+            println!("set priority of Note #{} to {}", id, priority.value());
         }
     }
 

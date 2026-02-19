@@ -5,6 +5,7 @@ pub enum AppError {
     Io(io::Error),
     Json(serde_json::Error),
     InvalidId(u64),
+    InvalidPriority(i64),
     Diesel(diesel::result::Error),
     DieselConnection(diesel::ConnectionError),
 }
@@ -15,6 +16,7 @@ impl fmt::Display for AppError {
             AppError::Io(e) => write!(f, "IO error: {}", e),
             AppError::Json(e) => write!(f, "JSON error: {}", e),
             AppError::InvalidId(id) => write!(f, "Invalid ID: {}", id),
+            AppError::InvalidPriority(priority) => write!(f, "Invalid priority: {}", priority),
             AppError::Diesel(e) => write!(f, "Diesel error: {}", e),
             AppError::DieselConnection(e) => write!(f, "Diesel connection error: {}", e),
         }
