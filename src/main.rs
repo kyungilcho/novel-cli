@@ -4,10 +4,8 @@ mod storage;
 
 use clap::{Parser, Subcommand};
 use error::Result;
-use note::{Note, NoteStatusFilter, edit_note, mark_done, next_note_id, remove_note};
-use storage::{load_notes, save_notes};
-
-use crate::note::filter_notes;
+use note::NoteStatusFilter;
+use storage::{add_note, edit_note_text, list_notes, mark_note_done, remove_note_by_id};
 
 #[derive(Parser)]
 #[command(name = "novel-cli")]
@@ -53,25 +51,14 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
 
-    let mut notes = load_notes()?;
-
     match cli.command {
         Commands::Add { text } => {
-            let next_id = next_note_id(&notes);
+            let id = add_note(&text)?;
 
-            notes.push(Note {
-                id: next_id,
-                text,
-                done: false,
-            });
-
-            save_notes(&notes)?;
-
-            println!("adding Note #{}", next_id);
+            println!("adding Note #{}", id);
         }
         Commands::Edit { id, text } => {
-            edit_note(&mut notes, id, text)?;
-            save_notes(&notes)?;
+            edit_note_text(id, &text)?;
             println!("edited Note #{}", id);
         }
         Commands::List {
@@ -87,7 +74,7 @@ fn run() -> Result<()> {
                 NoteStatusFilter::All
             };
 
-            let filtered_notes = filter_notes(&notes, status, contains.as_deref());
+            let filtered_notes = list_notes(status, contains.as_deref())?;
 
             if filtered_notes.is_empty() {
                 println!("No notes found.");
@@ -99,13 +86,11 @@ fn run() -> Result<()> {
             }
         }
         Commands::Done { id } => {
-            mark_done(&mut notes, id)?;
-            save_notes(&notes)?;
+            mark_note_done(id)?;
             println!("marked Note #{} as done", id);
         }
         Commands::Remove { id } => {
-            remove_note(&mut notes, id)?;
-            save_notes(&notes)?;
+            remove_note_by_id(id)?;
             println!("removed Note #{}", id);
         }
     }

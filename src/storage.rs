@@ -2,8 +2,8 @@ use std::{fs, io::ErrorKind, path::Path};
 
 use rusqlite::{Connection, params};
 
-use crate::error::Result;
-use crate::note::Note;
+use crate::error::{AppError, Result};
+use crate::note::{Note, NoteStatusFilter};
 
 // SQLite file used by the current storage backend.
 const DB_FILE: &str = "notes.db";
@@ -112,59 +112,85 @@ fn migrate_legacy_json_if_needed(conn: &mut Connection) -> Result<()> {
     Ok(())
 }
 
-/// Load all notes from SQLite ordered by id.
-///
-/// Rust/SQL flow:
-/// - `prepare` compiles SQL statement.
-/// - `query_map` iterates rows and maps each row into `Note`.
-/// - `collect::<Result<Vec<_>, _>>()` folds iterator of row results into one
-///   result value (`Ok(Vec<Note>)` or first encountered error).
-pub fn load_notes() -> Result<Vec<Note>> {
+pub fn add_note(text: &str) -> Result<u64> {
+    let conn = open_connection()?;
+    conn.execute(
+        "INSERT INTO notes (text, done) VALUES (?1, 0)",
+        params![text],
+    )?;
+    Ok(conn.last_insert_rowid() as u64)
+}
+
+pub fn list_notes(status: NoteStatusFilter, contains: Option<&str>) -> Result<Vec<Note>> {
     let conn = open_connection()?;
 
-    let mut stmt = conn.prepare("SELECT id, text, done FROM notes ORDER BY id")?;
+    let sql = match status {
+        NoteStatusFilter::All => {
+            "SELECT id, text, done FROM notes
+             WHERE (?1 IS NULL OR instr(text, ?1) > 0)
+             ORDER BY id"
+        }
+        NoteStatusFilter::Done => {
+            "SELECT id, text, done FROM notes
+             WHERE done = 1 AND (?1 IS NULL OR instr(text, ?1) > 0)
+             ORDER BY id"
+        }
+        NoteStatusFilter::Todo => {
+            "SELECT id, text, done FROM notes
+             WHERE done = 0 AND (?1 IS NULL OR instr(text, ?1) > 0)
+             ORDER BY id"
+        }
+    };
 
-    let rows = stmt.query_map([], |row| {
+    let mut stmt = conn.prepare(sql)?;
+    let rows = stmt.query_map(params![contains], |row| {
         Ok(Note {
-            // `row.get(index)` reads column by selected position.
             id: row.get(0)?,
             text: row.get(1)?,
             done: row.get(2)?,
         })
     })?;
 
-    // Turbofish here specifies the concrete collection target type.
     let notes = rows.collect::<std::result::Result<Vec<_>, _>>()?;
 
     Ok(notes)
 }
 
-/// Persist current in-memory notes snapshot into SQLite.
-///
-/// Current strategy is "replace-all":
-/// 1) begin transaction
-/// 2) delete existing rows
-/// 3) reinsert current snapshot
-/// 4) commit
-///
-/// This is simple and deterministic for a local CLI app.
-pub fn save_notes(notes: &[Note]) -> Result<()> {
-    let mut conn = open_connection()?;
-    let tx = conn.transaction()?;
+pub fn mark_note_done(id: u64) -> Result<()> {
+    let conn = open_connection()?;
 
-    tx.execute("DELETE FROM notes", [])?;
+    let changed = conn.execute("UPDATE notes SET done = 1 WHERE id = ?1", params![id])?;
 
-    // Same scoping reason as migration: drop statement before commit.
-    {
-        let mut stmt = tx.prepare("INSERT INTO notes (id, text, done) VALUES (?1, ?2, ?3)")?;
-
-        // `notes` is `&[Note]`, so this loop yields `&Note` items.
-        for note in notes {
-            stmt.execute(params![note.id, note.text, note.done])?;
-        }
+    if changed == 0 {
+        return Err(AppError::InvalidId(id));
     }
 
-    tx.commit()?;
+    Ok(())
+}
+
+pub fn edit_note_text(id: u64, text: &str) -> Result<()> {
+    let conn = open_connection()?;
+
+    let changed = conn.execute(
+        "UPDATE notes SET text = ?1 WHERE id = ?2",
+        params![text, id],
+    )?;
+
+    if changed == 0 {
+        return Err(AppError::InvalidId(id));
+    }
+
+    Ok(())
+}
+
+pub fn remove_note_by_id(id: u64) -> Result<()> {
+    let conn = open_connection()?;
+
+    let changed = conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
+
+    if changed == 0 {
+        return Err(AppError::InvalidId(id));
+    }
 
     Ok(())
 }
