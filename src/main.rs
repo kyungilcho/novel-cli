@@ -4,7 +4,7 @@ mod storage;
 
 use clap::{Parser, Subcommand};
 use error::Result;
-use note::{Note, mark_done, next_note_id, remove_note};
+use note::{Note, edit_note, mark_done, next_note_id, remove_note};
 use storage::{load_notes, save_notes};
 
 #[derive(Parser)]
@@ -20,6 +20,7 @@ enum Commands {
     List,
     Done { id: u64 },
     Remove { id: u64 },
+    Edit { id: u64, text: String },
 }
 
 fn main() {
@@ -47,6 +48,11 @@ fn run() -> Result<()> {
             save_notes(&notes)?;
 
             println!("adding Note #{}", next_id);
+        }
+        Commands::Edit { id, text } => {
+            edit_note(&mut notes, id, text)?;
+            save_notes(&notes)?;
+            println!("edited Note #{}", id);
         }
         Commands::List => {
             if notes.is_empty() {
