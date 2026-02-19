@@ -1,13 +1,7 @@
-mod error;
-mod note;
-mod schema;
-mod storage;
-
 use clap::{Parser, Subcommand};
-use error::Result;
-use note::{NoteStatusFilter, Priority};
-use storage::{
-    add_note, edit_note_text, list_notes, mark_note_done, remove_note_by_id, set_note_priority,
+use novel_core::{
+    Result, NoteStatusFilter, Priority, add_note, edit_note_text, list_notes, mark_note_done,
+    remove_note_by_id, set_note_priority,
 };
 
 #[derive(Parser)]
