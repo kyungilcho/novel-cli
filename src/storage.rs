@@ -23,8 +23,8 @@ fn open_connection() -> Result<Connection> {
     // `?` propagates errors and converts them into our AppError via `From`.
     let mut conn = Connection::open(DB_FILE)?;
 
-    // Always safe to call; SQL uses IF NOT EXISTS.
-    ensure_schema(&conn)?;
+    // run migration
+    run_migrations(&conn)?;
 
     // If needed, migrate data from the legacy JSON file into SQLite.
     migrate_legacy_json_if_needed(&mut conn)?;
@@ -32,23 +32,46 @@ fn open_connection() -> Result<Connection> {
     Ok(conn)
 }
 
-/// Ensure the `notes` table exists.
-///
-/// SQL details:
-/// - `CREATE TABLE IF NOT EXISTS` is idempotent.
-/// - `id INTEGER PRIMARY KEY` defines the primary key column.
-/// - `done` is stored as INTEGER because SQLite has no strict BOOLEAN type.
-/// - `CHECK (done IN (0, 1))` enforces boolean-like values.
-fn ensure_schema(conn: &Connection) -> Result<()> {
+fn run_migrations(conn: &Connection) -> Result<()> {
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS notes (
-            id INTEGER PRIMARY KEY,
-            text TEXT NOT NULL,
-            done INTEGER NOT NULL CHECK (done IN (0, 1))
+        "CREATE TABLE IF NOT EXISTS schema_migrations (
+            version INTEGER PRIMARY KEY
         )",
-        // No SQL bind parameters for this statement.
         [],
     )?;
+
+    let current: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if current < 1 {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS notes (
+                id INTEGER PRIMARY KEY,
+                text TEXT NOT NULL,
+                done INTEGER NOT NULL CHECK (done IN (0, 1))
+            )",
+            [],
+        )?;
+
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (1)", [])?;
+    }
+
+    if current < 2 {
+        conn.execute(
+            "ALTER TABLE notes ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))",
+            [],
+        )?;
+        conn.execute(
+            "ALTER TABLE notes ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
+            [],
+        )?;
+
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (2)", [])?;
+    }
+
     Ok(())
 }
 
@@ -115,7 +138,7 @@ fn migrate_legacy_json_if_needed(conn: &mut Connection) -> Result<()> {
 pub fn add_note(text: &str) -> Result<u64> {
     let conn = open_connection()?;
     conn.execute(
-        "INSERT INTO notes (text, done) VALUES (?1, 0)",
+        "INSERT INTO notes (text, done, created_at, updated_at) VALUES (?1, 0, datetime('now'), datetime('now'))",
         params![text],
     )?;
     Ok(conn.last_insert_rowid() as u64)
@@ -172,7 +195,7 @@ pub fn edit_note_text(id: u64, text: &str) -> Result<()> {
     let conn = open_connection()?;
 
     let changed = conn.execute(
-        "UPDATE notes SET text = ?1 WHERE id = ?2",
+        "UPDATE notes SET text = ?1, updated_at = datetime('now') WHERE id = ?2",
         params![text, id],
     )?;
 
