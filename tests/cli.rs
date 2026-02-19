@@ -3,6 +3,10 @@ use predicates::prelude::*;
 use std::path::Path;
 use tempfile::tempdir;
 
+use diesel::prelude::*;
+use diesel::sql_query;
+use diesel::sqlite::SqliteConnection;
+
 fn run_in(dir: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
     let mut cmd = cargo::cargo_bin_cmd!("novel-cli");
 
@@ -105,4 +109,44 @@ fn filter_notes() {
     run(&["list", "--todo", "--contains", "second"])
         .success()
         .stdout(predicate::str::contains("No notes found."));
+}
+
+fn seed_v1_db(dir: &Path) {
+    let db_path = dir.join("notes.db");
+    let mut conn = SqliteConnection::establish(db_path.to_str().expect("valid db path")).unwrap();
+
+    sql_query(
+        "CREATE TABLE notes (
+            id INTEGER PRIMARY KEY,
+            text TEXT NOT NULL,
+            done INTEGER NOT NULL CHECK (done IN (0, 1))
+        )",
+    )
+    .execute(&mut conn)
+    .unwrap();
+
+    sql_query("INSERT INTO notes (id, text, done) VALUES (1, 'legacy task', 0)")
+        .execute(&mut conn)
+        .unwrap();
+}
+
+#[test]
+fn migrates_v1_db_on_first_run() {
+    let dir = tempdir().unwrap();
+    let run = |args: &[&str]| run_in(dir.path(), args);
+
+    // old schema DB 생성
+    seed_v1_db(dir.path());
+
+    // 첫 실행에서 마이그레이션 + 기존 데이터 유지 확인
+    run(&["list"])
+        .success()
+        .stdout(predicate::str::contains("[ ] 1: legacy task"));
+
+    // 마이그레이션 이후 쓰기 동작도 정상인지 확인
+    run(&["add", "fresh task"]).success();
+
+    run(&["list"]).success().stdout(
+        predicate::str::contains("[ ] 1: legacy task").and(predicate::str::contains("fresh task")),
+    );
 }

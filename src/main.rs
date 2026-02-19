@@ -1,5 +1,6 @@
 mod error;
 mod note;
+mod schema;
 mod storage;
 
 use clap::{Parser, Subcommand};

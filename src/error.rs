@@ -5,7 +5,8 @@ pub enum AppError {
     Io(io::Error),
     Json(serde_json::Error),
     InvalidId(u64),
-    Sql(rusqlite::Error),
+    Diesel(diesel::result::Error),
+    DieselConnection(diesel::ConnectionError),
 }
 
 impl fmt::Display for AppError {
@@ -14,7 +15,8 @@ impl fmt::Display for AppError {
             AppError::Io(e) => write!(f, "IO error: {}", e),
             AppError::Json(e) => write!(f, "JSON error: {}", e),
             AppError::InvalidId(id) => write!(f, "Invalid ID: {}", id),
-            AppError::Sql(e) => write!(f, "SQL error: {}", e),
+            AppError::Diesel(e) => write!(f, "Diesel error: {}", e),
+            AppError::DieselConnection(e) => write!(f, "Diesel connection error: {}", e),
         }
     }
 }
@@ -33,9 +35,15 @@ impl From<serde_json::Error> for AppError {
     }
 }
 
-impl From<rusqlite::Error> for AppError {
-    fn from(value: rusqlite::Error) -> Self {
-        AppError::Sql(value)
+impl From<diesel::result::Error> for AppError {
+    fn from(value: diesel::result::Error) -> Self {
+        AppError::Diesel(value)
+    }
+}
+
+impl From<diesel::ConnectionError> for AppError {
+    fn from(value: diesel::ConnectionError) -> Self {
+        AppError::DieselConnection(value)
     }
 }
 

@@ -1,133 +1,118 @@
 use std::{fs, io::ErrorKind, path::Path};
 
-use rusqlite::{Connection, params};
+use diesel::prelude::*;
+use diesel::sqlite::SqliteConnection;
+use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl, sql_query};
 
 use crate::error::{AppError, Result};
 use crate::note::{Note, NoteStatusFilter};
+use crate::schema::notes;
+use crate::schema::notes::dsl as notes_dsl;
 
-// SQLite file used by the current storage backend.
 const DB_FILE: &str = "notes.db";
-
-// Previous JSON file used by the legacy storage backend.
-// We migrate from this file once and then archive it.
 const LEGACY_JSON_FILE: &str = "notes.json";
 
-/// Open the database connection and ensure storage is ready.
-///
-/// Design intent:
-/// - Callers (`load_notes`, `save_notes`) should not need to remember
-///   schema creation or legacy migration details.
-/// - Centralizing these bootstrapping steps here keeps call sites simple.
-fn open_connection() -> Result<Connection> {
-    // `Connection::open` creates the DB file if it does not exist.
-    // `?` propagates errors and converts them into our AppError via `From`.
-    let mut conn = Connection::open(DB_FILE)?;
-
-    // run migration
-    run_migrations(&conn)?;
-
-    // If needed, migrate data from the legacy JSON file into SQLite.
+fn open_connection() -> Result<SqliteConnection> {
+    let mut conn = SqliteConnection::establish(DB_FILE)?;
+    run_migrations(&mut conn)?;
     migrate_legacy_json_if_needed(&mut conn)?;
-
     Ok(conn)
 }
 
-fn run_migrations(conn: &Connection) -> Result<()> {
-    conn.execute(
+fn run_migrations(conn: &mut SqliteConnection) -> Result<()> {
+    sql_query(
         "CREATE TABLE IF NOT EXISTS schema_migrations (
             version INTEGER PRIMARY KEY
         )",
-        [],
-    )?;
+    )
+    .execute(conn)?;
 
-    let current: i64 = conn.query_row(
-        "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
-        [],
-        |row| row.get(0),
-    )?;
+    let current: i64 = diesel::select(diesel::dsl::sql::<diesel::sql_types::BigInt>(
+        "COALESCE((SELECT MAX(version) FROM schema_migrations), 0)",
+    ))
+    .get_result(conn)?;
 
     if current < 1 {
-        conn.execute(
+        sql_query(
             "CREATE TABLE IF NOT EXISTS notes (
                 id INTEGER PRIMARY KEY,
                 text TEXT NOT NULL,
                 done INTEGER NOT NULL CHECK (done IN (0, 1))
             )",
-            [],
-        )?;
-
-        conn.execute("INSERT INTO schema_migrations (version) VALUES (1)", [])?;
+        )
+        .execute(conn)?;
+        sql_query("INSERT INTO schema_migrations (version) VALUES (1)").execute(conn)?;
     }
 
     if current < 2 {
-        conn.execute(
-            "ALTER TABLE notes ADD COLUMN created_at TEXT NOT NULL DEFAULT (datetime('now'))",
-            [],
-        )?;
-        conn.execute(
-            "ALTER TABLE notes ADD COLUMN updated_at TEXT NOT NULL DEFAULT (datetime('now'))",
-            [],
-        )?;
+        sql_query(
+            "ALTER TABLE notes ADD COLUMN created_at TEXT NOT NULL DEFAULT '1970-01-01 00:00:00'",
+        )
+        .execute(conn)?;
+        sql_query(
+            "ALTER TABLE notes ADD COLUMN updated_at TEXT NOT NULL DEFAULT '1970-01-01 00:00:00'",
+        )
+        .execute(conn)?;
 
-        conn.execute("INSERT INTO schema_migrations (version) VALUES (2)", [])?;
+        sql_query(
+        "UPDATE notes SET created_at = datetime('now') WHERE created_at = '1970-01-01 00:00:00'",
+    )
+    .execute(conn)?;
+        sql_query(
+        "UPDATE notes SET updated_at = datetime('now') WHERE updated_at = '1970-01-01 00:00:00'",
+    )
+    .execute(conn)?;
+
+        sql_query("INSERT INTO schema_migrations (version) VALUES (2)").execute(conn)?;
+    }
+
+    if current < 3 {
+        sql_query("ALTER TABLE notes ADD COLUMN priority INTEGER NOT NULL DEFAULT (0)")
+            .execute(conn)?;
+        sql_query("INSERT INTO schema_migrations (version) VALUES (3)").execute(conn)?;
     }
 
     Ok(())
 }
 
-/// One-time migration from `notes.json` to SQLite.
-///
-/// Rules:
-/// 1) If the legacy file does not exist, do nothing.
-/// 2) If DB already has rows, assume migration already happened.
-/// 3) Insert inside a transaction so migration is atomic.
-fn migrate_legacy_json_if_needed(conn: &mut Connection) -> Result<()> {
+fn migrate_legacy_json_if_needed(conn: &mut SqliteConnection) -> Result<()> {
     let legacy_path = Path::new(LEGACY_JSON_FILE);
-
-    // Early return keeps no-op path explicit and cheap.
     if !legacy_path.exists() {
         return Ok(());
     }
 
-    // `query_row` executes one-row SQL and maps that row via closure.
-    // `row.get(0)` reads the first selected column (`COUNT(*)`).
-    let count: i64 = conn.query_row("SELECT COUNT(*) FROM notes", [], |row| row.get(0))?;
+    let count: i64 = notes_dsl::notes.count().get_result(conn)?;
 
-    // If table is already populated, skip migration to avoid duplicates.
     if count > 0 {
         return Ok(());
     }
 
-    // Read legacy JSON and deserialize into typed notes.
     let raw = fs::read_to_string(legacy_path)?;
-    let notes: Vec<Note> = serde_json::from_str(&raw)?;
+    let legacy_notes: Vec<Note> = serde_json::from_str(&raw)?;
 
-    // Transaction: either all rows are inserted, or none are.
-    let tx = conn.transaction()?;
-
-    // This extra block is intentional.
-    // `stmt` borrows `tx`; ending the block drops `stmt` before `commit`.
-    {
-        // SQL placeholders use positional binding (?1, ?2, ?3).
-        let mut stmt = tx.prepare("INSERT INTO notes (id, text, done) VALUES (?1, ?2, ?3)")?;
-
-        // Consuming `notes` is fine here because vector is no longer needed.
-        for note in notes {
-            // `params![]` binds values to SQL placeholders in order.
-            stmt.execute(params![note.id, note.text, note.done])?;
+    conn.transaction::<_, AppError, _>(|tx| {
+        for note in &legacy_notes {
+            diesel::insert_into(notes::table)
+                .values((
+                    notes_dsl::id.eq(note.id as i64),
+                    notes_dsl::text.eq(&note.text),
+                    notes_dsl::done.eq(note.done),
+                    notes_dsl::priority.eq(note.priority),
+                    notes_dsl::created_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
+                        "CURRENT_TIMESTAMP",
+                    )),
+                    notes_dsl::updated_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
+                        "CURRENT_TIMESTAMP",
+                    )),
+                ))
+                .execute(tx)?;
         }
-    }
+        Ok(())
+    })?;
 
-    tx.commit()?;
-
-    // Keep an archival marker instead of deleting permanently.
-    // `with_extension("json.migrated")` turns `notes.json` into
-    // `notes.json.migrated`.
     let migrated_path = legacy_path.with_extension("json.migrated");
     match fs::rename(legacy_path, &migrated_path) {
         Ok(()) => {}
-        // NotFound: file already moved/removed.
-        // AlreadyExists: archive file already exists.
         Err(e) if e.kind() == ErrorKind::NotFound || e.kind() == ErrorKind::AlreadyExists => {}
         Err(e) => return Err(e.into()),
     }
@@ -135,84 +120,122 @@ fn migrate_legacy_json_if_needed(conn: &mut Connection) -> Result<()> {
     Ok(())
 }
 
-pub fn add_note(text: &str) -> Result<u64> {
-    let conn = open_connection()?;
-    conn.execute(
-        "INSERT INTO notes (text, done, created_at, updated_at) VALUES (?1, 0, datetime('now'), datetime('now'))",
-        params![text],
-    )?;
-    Ok(conn.last_insert_rowid() as u64)
+pub fn add_note(text_input: &str) -> Result<u64> {
+    let mut conn = open_connection()?;
+
+    diesel::insert_into(notes::table)
+        .values((
+            notes_dsl::text.eq(text_input),
+            notes_dsl::done.eq(false),
+            notes_dsl::priority.eq(0_i64),
+            notes_dsl::created_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
+                "CURRENT_TIMESTAMP",
+            )),
+            notes_dsl::created_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
+                "CURRENT_TIMESTAMP",
+            )),
+        ))
+        .execute(&mut conn)?;
+
+    let new_id: i64 = diesel::select(diesel::dsl::sql::<diesel::sql_types::BigInt>(
+        "last_insert_rowid()",
+    ))
+    .get_result(&mut conn)?;
+
+    Ok(new_id as u64)
 }
 
 pub fn list_notes(status: NoteStatusFilter, contains: Option<&str>) -> Result<Vec<Note>> {
-    let conn = open_connection()?;
+    let mut conn = open_connection()?;
 
-    let sql = match status {
-        NoteStatusFilter::All => {
-            "SELECT id, text, done FROM notes
-             WHERE (?1 IS NULL OR instr(text, ?1) > 0)
-             ORDER BY id"
-        }
+    let mut query = notes_dsl::notes
+        .select((
+            notes_dsl::id,
+            notes_dsl::text,
+            notes_dsl::done,
+            notes_dsl::priority,
+        ))
+        .into_boxed();
+
+    match status {
+        NoteStatusFilter::All => {}
         NoteStatusFilter::Done => {
-            "SELECT id, text, done FROM notes
-             WHERE done = 1 AND (?1 IS NULL OR instr(text, ?1) > 0)
-             ORDER BY id"
+            query = query.filter(notes_dsl::done.eq(true));
         }
         NoteStatusFilter::Todo => {
-            "SELECT id, text, done FROM notes
-             WHERE done = 0 AND (?1 IS NULL OR instr(text, ?1) > 0)
-             ORDER BY id"
+            query = query.filter(notes_dsl::done.eq(false));
         }
-    };
+    }
 
-    let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(params![contains], |row| {
-        Ok(Note {
-            id: row.get(0)?,
-            text: row.get(1)?,
-            done: row.get(2)?,
+    if let Some(term) = contains {
+        let pattern = format!("%{}%", term);
+        query = query.filter(notes_dsl::text.like(pattern));
+    }
+
+    let rows: Vec<(i64, String, bool, i64)> = query.order(notes_dsl::id.asc()).load(&mut conn)?;
+
+    let notes = rows
+        .into_iter()
+        .map(|(id, text, done, priority)| Note {
+            id: id as u64,
+            text,
+            done,
+            priority,
         })
-    })?;
-
-    let notes = rows.collect::<std::result::Result<Vec<_>, _>>()?;
+        .collect();
 
     Ok(notes)
 }
 
-pub fn mark_note_done(id: u64) -> Result<()> {
-    let conn = open_connection()?;
+pub fn mark_note_done(target_id: u64) -> Result<()> {
+    let mut conn = open_connection()?;
+    let db_id = i64::try_from(target_id).map_err(|_| AppError::InvalidId(target_id))?;
 
-    let changed = conn.execute("UPDATE notes SET done = 1 WHERE id = ?1", params![id])?;
+    let changed = diesel::update(notes_dsl::notes.filter(notes_dsl::id.eq(db_id)))
+        .set((
+            notes_dsl::done.eq(true),
+            notes_dsl::created_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
+                "CURRENT_TIMESTAMP",
+            )),
+        ))
+        .execute(&mut conn)?;
 
     if changed == 0 {
-        return Err(AppError::InvalidId(id));
+        return Err(AppError::InvalidId(target_id));
     }
 
     Ok(())
 }
 
-pub fn edit_note_text(id: u64, text: &str) -> Result<()> {
-    let conn = open_connection()?;
+pub fn edit_note_text(target_id: u64, new_text: &str) -> Result<()> {
+    let mut conn = open_connection()?;
+    let db_id = i64::try_from(target_id).map_err(|_| AppError::InvalidId(target_id))?;
 
-    let changed = conn.execute(
-        "UPDATE notes SET text = ?1, updated_at = datetime('now') WHERE id = ?2",
-        params![text, id],
-    )?;
+    let changed = diesel::update(notes_dsl::notes.filter(notes_dsl::id.eq(db_id)))
+        .set((
+            notes_dsl::text.eq(new_text),
+            notes_dsl::created_at.eq(diesel::dsl::sql::<diesel::sql_types::Timestamp>(
+                "CURRENT_TIMESTAMP",
+            )),
+        ))
+        .execute(&mut conn)?;
 
     if changed == 0 {
-        return Err(AppError::InvalidId(id));
+        return Err(AppError::InvalidId(target_id));
     }
 
     Ok(())
 }
 
-pub fn remove_note_by_id(id: u64) -> Result<()> {
-    let conn = open_connection()?;
+pub fn remove_note_by_id(target_id: u64) -> Result<()> {
+    let mut conn = open_connection()?;
+    let db_id = i64::try_from(target_id).map_err(|_| AppError::InvalidId(target_id))?;
 
-    let changed = conn.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
+    let changed =
+        diesel::delete(notes_dsl::notes.filter(notes_dsl::id.eq(db_id))).execute(&mut conn)?;
 
     if changed == 0 {
-        return Err(AppError::InvalidId(id));
+        return Err(AppError::InvalidId(target_id));
     }
 
     Ok(())
