@@ -475,10 +475,18 @@ dependencies = [
  "assert_cmd",
  "clap",
  "diesel",
+ "novel-core",
  "predicates",
+ "tempfile",
+]
+
+[[package]]
+name = "novel-core"
+version = "0.1.0"
+dependencies = [
+ "diesel",
  "serde",
  "serde_json",
- "tempfile",
  "thiserror",
 ]
 
