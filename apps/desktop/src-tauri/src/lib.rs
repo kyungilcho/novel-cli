@@ -51,6 +51,7 @@ pub fn run() {
             add_note,
             list_notes,
             commands::project::open_project,
+            commands::project::default_workspace_root,
             commands::file::list_files,
             commands::file::read_file,
             commands::file::write_file,

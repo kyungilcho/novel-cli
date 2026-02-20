@@ -1,6 +1,6 @@
-import { useState } from "react";
-import { openProject } from "./lib/api/projectApi";
-import { listFiles, readFile, writeFile, createFile } from "./lib/api/fileApi";
+import { useEffect, useState } from "react";
+import { defaultWorkspaceRoot, openProject } from "./lib/api/projectApi";
+import { createFile, listFiles, readFile, writeFile } from "./lib/api/fileApi";
 import type { ProjectInfo } from "./lib/api/projectApi";
 import type { FileEntry } from "./lib/api/fileApi";
 
@@ -12,6 +12,39 @@ export default function App() {
     const [content, setContent] = useState("");
     const [error, setError] = useState("");
     const [newFileName, setNewFileName] = useState("");
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const initDefaultRoot = async () => {
+            try {
+                const root = await defaultWorkspaceRoot();
+                if (!cancelled) {
+                    setInputRoot(root);
+                }
+            } catch (e) {
+                if (!cancelled) {
+                    setError(String(e));
+                }
+            }
+        };
+
+        void initDefaultRoot();
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    const onUseIsolatedRoot = async () => {
+        setError("");
+        try {
+            const root = await defaultWorkspaceRoot();
+            setInputRoot(root);
+        } catch (e) {
+            setError(String(e));
+        }
+    };
 
     const onOpenProject = async () => {
         setError("");
@@ -69,7 +102,7 @@ export default function App() {
         try {
             await createFile(project.root, ".", newFileName.trim());
             setNewFileName("");
-            await onRefreshFiles(); // Refresh the file list after creating
+            await onRefreshFiles();
         } catch (e) {
             setError(String(e));
         }
@@ -86,14 +119,13 @@ export default function App() {
                     value={inputRoot}
                     onChange={(e) => setInputRoot(e.currentTarget.value)}
                 />
+                <button type="button" onClick={onUseIsolatedRoot}>
+                    Isolated Root
+                </button>
                 <button type="button" onClick={onOpenProject}>
                     Open
                 </button>
-                <button
-                    type="button"
-                    onClick={onRefreshFiles}
-                    disabled={!project}
-                >
+                <button type="button" onClick={onRefreshFiles} disabled={!project}>
                     Refresh Files
                 </button>
             </div>
@@ -119,9 +151,7 @@ export default function App() {
                         <input
                             placeholder="New file name..."
                             value={newFileName}
-                            onChange={(e) =>
-                                setNewFileName(e.currentTarget.value)
-                            }
+                            onChange={(e) => setNewFileName(e.currentTarget.value)}
                             disabled={!project}
                             style={{ flex: 1, minWidth: 0 }}
                         />
@@ -145,9 +175,7 @@ export default function App() {
                                         style={{
                                             background: "transparent",
                                             border: "none",
-                                            cursor: f.is_dir
-                                                ? "default"
-                                                : "pointer",
+                                            cursor: f.is_dir ? "default" : "pointer",
                                         }}
                                     >
                                         {label}
@@ -168,11 +196,7 @@ export default function App() {
                         disabled={!selectedPath}
                     />
                     <div style={{ marginTop: 8 }}>
-                        <button
-                            type="button"
-                            onClick={onSave}
-                            disabled={!selectedPath}
-                        >
+                        <button type="button" onClick={onSave} disabled={!selectedPath}>
                             Save
                         </button>
                     </div>
