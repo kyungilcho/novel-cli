@@ -1,7 +1,12 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 use novel_core::{
-    NoteStatusFilter, Priority, Result, add_note, edit_note_text, list_notes, mark_note_done,
-    remove_note_by_id, set_note_priority,
+    NoteStatusFilter, Priority, Result, add_note_in, edit_note_text,
+    storage::{
+        DEFAULT_DB_FILE, list_notes_in, mark_note_done_in, remove_note_by_id_in,
+        set_note_priority_in,
+    },
 };
 
 #[derive(Parser)]
@@ -57,10 +62,14 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
 
+    let db_path = std::env::var_os("NOVEL_DB_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_DB_FILE));
+
     match cli.command {
         Commands::Add { text, priority } => {
             let priority = Priority::try_from(priority)?;
-            let id = add_note(&text, priority)?;
+            let id = add_note_in(&db_path, &text, priority)?;
 
             println!("adding Note #{}", id);
         }
@@ -87,7 +96,7 @@ fn run() -> Result<()> {
                 None => None,
             };
 
-            let filtered_notes = list_notes(status, contains.as_deref(), priority)?;
+            let filtered_notes = list_notes_in(&db_path, status, contains.as_deref(), priority)?;
 
             if filtered_notes.is_empty() {
                 println!("No notes found.");
@@ -99,16 +108,16 @@ fn run() -> Result<()> {
             }
         }
         Commands::Done { id } => {
-            mark_note_done(id)?;
+            mark_note_done_in(&db_path, id)?;
             println!("marked Note #{} as done", id);
         }
         Commands::Remove { id } => {
-            remove_note_by_id(id)?;
+            remove_note_by_id_in(&db_path, id)?;
             println!("removed Note #{}", id);
         }
         Commands::Priority { id, priority } => {
             let priority = Priority::try_from(priority)?;
-            set_note_priority(id, priority)?;
+            set_note_priority_in(&db_path, id, priority)?;
             println!("set priority of Note #{} to {}", id, priority.value());
         }
     }
