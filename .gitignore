@@ -1,4 +1,5 @@
 /target
+/node_modules
 notes.json
 notes.db
 notes.db-*

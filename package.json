@@ -1,0 +1,10 @@
+{
+  "name": "novel-cli-root",
+  "private": true,
+  "scripts": {
+    "tauri": "pnpm -F desktop tauri",
+    "tauri:dev": "pnpm -F desktop tauri dev",
+    "tauri:build": "pnpm -F desktop tauri build",
+    "desktop:dev": "pnpm -F desktop dev"
+  }
+}
