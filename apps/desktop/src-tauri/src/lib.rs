@@ -5,6 +5,8 @@ use novel_core::{
 use std::{fs, path::PathBuf};
 use tauri::{AppHandle, Manager};
 
+mod commands;
+
 #[tauri::command]
 fn add_note(app: AppHandle, text: String, priority: i64) -> Result<u64, String> {
     let db_path = resolve_db_path(&app)?;
@@ -45,7 +47,15 @@ fn list_notes(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![add_note, list_notes])
+        .invoke_handler(tauri::generate_handler![
+            add_note,
+            list_notes,
+            commands::project::open_project,
+            commands::file::list_files,
+            commands::file::read_file,
+            commands::file::write_file,
+            commands::file::create_file,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -1,7 +1,11 @@
 [workspace]
 members = [
-    "crates/core",
-    "apps/cli",
-    "apps/desktop/src-tauri",
+  "crates/core",
+  "crates/workspace-core",
+  "apps/cli",
+  "apps/desktop/src-tauri",
 ]
 resolver = "2"
+
+[workspace.dependencies]
+thiserror = "2"

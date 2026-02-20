@@ -1,101 +1,183 @@
-import { useEffect, useState } from "react";
-import { addNote, listNotes } from "./lib/noteApi";
-import type { Note } from "./lib/noteApi";
-
-type DraftNote = {
-    text: string;
-    priority: number;
-};
+import { useState } from "react";
+import { openProject } from "./lib/api/projectApi";
+import { listFiles, readFile, writeFile, createFile } from "./lib/api/fileApi";
+import type { ProjectInfo } from "./lib/api/projectApi";
+import type { FileEntry } from "./lib/api/fileApi";
 
 export default function App() {
-    const [draft, setDraft] = useState<DraftNote>({
-        text: "",
-        priority: 0,
-    });
-    const [notes, setNotes] = useState<Note[]>([]);
-    const [loading, setLoading] = useState(false);
+    const [inputRoot, setInputRoot] = useState("");
+    const [project, setProject] = useState<ProjectInfo | null>(null);
+    const [files, setFiles] = useState<FileEntry[]>([]);
+    const [selectedPath, setSelectedPath] = useState("");
+    const [content, setContent] = useState("");
     const [error, setError] = useState("");
+    const [newFileName, setNewFileName] = useState("");
 
-    const refresh = async () => {
-        setLoading(true);
+    const onOpenProject = async () => {
         setError("");
         try {
-            const data = await listNotes();
-            setNotes(data);
-        } catch (error) {
-            setError(String(error));
-        } finally {
-            setLoading(false);
+            const p = await openProject(inputRoot.trim());
+            setProject(p);
+            setSelectedPath("");
+            setContent("");
+
+            const list = await listFiles(p.root, ".");
+            setFiles(list);
+        } catch (e) {
+            setError(String(e));
         }
     };
 
-    const onAdd = async () => {
-        const text = draft.text.trim();
-        if (!text) return;
-
+    const onRefreshFiles = async () => {
+        if (!project) return;
         setError("");
         try {
-            await addNote(text, draft.priority);
-            setDraft({ text: "", priority: 0 });
-            await refresh();
-        } catch (error) {
-            setError(String(error));
+            const list = await listFiles(project.root, ".");
+            setFiles(list);
+        } catch (e) {
+            setError(String(e));
         }
     };
 
-    useEffect(() => {
-        void refresh();
-    }, []);
+    const onRead = async (path: string) => {
+        if (!project) return;
+        if (path.endsWith("/")) return;
+
+        setError("");
+        try {
+            const text = await readFile(project.root, path);
+            setSelectedPath(path);
+            setContent(text);
+        } catch (e) {
+            setError(String(e));
+        }
+    };
+
+    const onSave = async () => {
+        if (!project || !selectedPath) return;
+        setError("");
+        try {
+            await writeFile(project.root, selectedPath, content);
+        } catch (e) {
+            setError(String(e));
+        }
+    };
+
+    const onCreateFile = async () => {
+        if (!project || !newFileName.trim()) return;
+        setError("");
+        try {
+            await createFile(project.root, ".", newFileName.trim());
+            setNewFileName("");
+            await onRefreshFiles(); // Refresh the file list after creating
+        } catch (e) {
+            setError(String(e));
+        }
+    };
 
     return (
-        <main className="container">
-            <h1>Novel Notes</h1>
+        <main style={{ maxWidth: 900, margin: "24px auto", padding: 16 }}>
+            <h1>Novel IDE (Scaffold)</h1>
 
-            <div className="row">
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
                 <input
-                    value={draft.text}
-                    onChange={(e) => {
-                        const value = e.currentTarget.value;
-                        setDraft((prev) => ({
-                            ...prev,
-                            text: value,
-                        }));
-                    }}
+                    style={{ flex: 1 }}
+                    placeholder="project root path (absolute)"
+                    value={inputRoot}
+                    onChange={(e) => setInputRoot(e.currentTarget.value)}
                 />
-                <input
-                    type="number"
-                    min={0}
-                    max={5}
-                    value={draft.priority}
-                    onChange={(e) => {
-                        const raw = e.currentTarget.value;
-                        const next = raw === "" ? 0 : Number(raw);
-                        setDraft((prev) => ({
-                            ...prev,
-                            priority: Number.isFinite(next) ? next : 0,
-                        }));
-                    }}
-                />
-                <button onClick={onAdd} disabled={loading}>
-                    Add
+                <button type="button" onClick={onOpenProject}>
+                    Open
                 </button>
-                <button onClick={refresh} disabled={loading}>
-                    Refresh
+                <button
+                    type="button"
+                    onClick={onRefreshFiles}
+                    disabled={!project}
+                >
+                    Refresh Files
                 </button>
             </div>
 
+            {project && (
+                <p>
+                    Opened: <b>{project.name}</b> ({project.root})
+                </p>
+            )}
+
             {error && <p style={{ color: "crimson" }}>{error}</p>}
 
-            <ul>
-                {notes.map((note) => (
-                    <li key={note.id}>
-                        [{note.done ? "x" : " "}] P{note.priority} #{note.id}{" "}
-                        {note.text}
-                    </li>
-                ))}
-            </ul>
+            <div
+                style={{
+                    display: "grid",
+                    gridTemplateColumns: "280px 1fr",
+                    gap: 12,
+                }}
+            >
+                <section style={{ border: "1px solid #ddd", padding: 12 }}>
+                    <h3>Files</h3>
+                    <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
+                        <input
+                            placeholder="New file name..."
+                            value={newFileName}
+                            onChange={(e) =>
+                                setNewFileName(e.currentTarget.value)
+                            }
+                            disabled={!project}
+                            style={{ flex: 1, minWidth: 0 }}
+                        />
+                        <button
+                            type="button"
+                            onClick={onCreateFile}
+                            disabled={!project || !newFileName.trim()}
+                        >
+                            +
+                        </button>
+                    </div>
+                    <ul style={{ paddingLeft: 16 }}>
+                        {files.map((f) => {
+                            const label = f.is_dir ? `${f.path}/` : f.path;
+                            return (
+                                <li key={`${f.path}-${f.is_dir ? "d" : "f"}`}>
+                                    <button
+                                        type="button"
+                                        onClick={() => onRead(f.path)}
+                                        disabled={f.is_dir}
+                                        style={{
+                                            background: "transparent",
+                                            border: "none",
+                                            cursor: f.is_dir
+                                                ? "default"
+                                                : "pointer",
+                                        }}
+                                    >
+                                        {label}
+                                    </button>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                </section>
 
-            {!loading && notes.length === 0 && <p>No notes found.</p>}
+                <section style={{ border: "1px solid #ddd", padding: 12 }}>
+                    <h3>Editor</h3>
+                    <p>Selected: {selectedPath || "-"}</p>
+                    <textarea
+                        style={{ width: "100%", minHeight: 360 }}
+                        value={content}
+                        onChange={(e) => setContent(e.currentTarget.value)}
+                        disabled={!selectedPath}
+                    />
+                    <div style={{ marginTop: 8 }}>
+                        <button
+                            type="button"
+                            onClick={onSave}
+                            disabled={!selectedPath}
+                        >
+                            Save
+                        </button>
+                    </div>
+                </section>
+            </div>
         </main>
     );
 }

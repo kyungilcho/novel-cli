@@ -6,7 +6,9 @@
         "tauri:dev": "pnpm -F desktop tauri dev",
         "tauri:build": "pnpm -F desktop tauri build",
         "desktop:dev": "pnpm -F desktop dev",
-        "typecheck": "pnpm -F desktop exec tsc --noEmit"
+        "typecheck": "pnpm -F desktop exec tsc --noEmit",
+        "test": "cargo test --workspace",
+        "check": "pnpm typecheck && pnpm test"
     },
     "devDependencies": {
         "typescript": "~5.8.3"
