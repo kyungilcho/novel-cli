@@ -1,16 +1,20 @@
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use novel_core::{
-    Note, NoteStatusFilter, Priority, add_note as core_add_note, list_notes as core_list_notes,
+    add_note_in as core_add_note_in, list_notes_in as core_list_notes_in, Note, NoteStatusFilter,
+    Priority,
 };
+use std::{fs, path::PathBuf};
+use tauri::{AppHandle, Manager};
 
 #[tauri::command]
-fn add_note(text: String, priority: i64) -> Result<u64, String> {
+fn add_note(app: AppHandle, text: String, priority: i64) -> Result<u64, String> {
+    let db_path = resolve_db_path(&app)?;
     let priority = Priority::try_from(priority).map_err(|e| e.to_string())?;
-    core_add_note(&text, priority).map_err(|e| e.to_string())
+    core_add_note_in(&db_path, &text, priority).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn list_notes(
+    app: AppHandle,
     done: bool,
     todo: bool,
     contains: Option<String>,
@@ -33,7 +37,8 @@ fn list_notes(
         .transpose()
         .map_err(|e| e.to_string())?;
 
-    core_list_notes(status, contains.as_deref(), priority).map_err(|e| e.to_string())
+    let db_path = resolve_db_path(&app)?;
+    core_list_notes_in(&db_path, status, contains.as_deref(), priority).map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -43,4 +48,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![add_note, list_notes])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn resolve_db_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.join(novel_core::DEFAULT_DB_FILE))
 }

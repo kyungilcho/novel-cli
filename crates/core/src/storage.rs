@@ -1,4 +1,8 @@
-use std::{fs, io::ErrorKind, path::Path};
+use std::{
+    fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+};
 
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
@@ -9,13 +13,14 @@ use crate::note::{Note, NoteStatusFilter, Priority};
 use crate::schema::notes;
 use crate::schema::notes::dsl as notes_dsl;
 
-const DB_FILE: &str = "notes.db";
+pub const DEFAULT_DB_FILE: &str = "notes.db";
 const LEGACY_JSON_FILE: &str = "notes.json";
 
-fn open_connection() -> Result<SqliteConnection> {
-    let mut conn = SqliteConnection::establish(DB_FILE)?;
+fn open_connection(db_path: &Path) -> Result<SqliteConnection> {
+    let db_url = db_path.to_string_lossy();
+    let mut conn = SqliteConnection::establish(db_url.as_ref())?;
     run_migrations(&mut conn)?;
-    migrate_legacy_json_if_needed(&mut conn)?;
+    migrate_legacy_json_if_needed(&mut conn, &legacy_json_path_for(db_path))?;
     Ok(conn)
 }
 
@@ -101,8 +106,7 @@ fn run_migrations(conn: &mut SqliteConnection) -> Result<()> {
     Ok(())
 }
 
-fn migrate_legacy_json_if_needed(conn: &mut SqliteConnection) -> Result<()> {
-    let legacy_path = Path::new(LEGACY_JSON_FILE);
+fn migrate_legacy_json_if_needed(conn: &mut SqliteConnection, legacy_path: &Path) -> Result<()> {
     if !legacy_path.exists() {
         return Ok(());
     }
@@ -147,8 +151,19 @@ fn migrate_legacy_json_if_needed(conn: &mut SqliteConnection) -> Result<()> {
     Ok(())
 }
 
+fn legacy_json_path_for(db_path: &Path) -> PathBuf {
+    db_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(LEGACY_JSON_FILE)
+}
+
 pub fn add_note(text_input: &str, priority: Priority) -> Result<u64> {
-    let mut conn = open_connection()?;
+    add_note_in(Path::new(DEFAULT_DB_FILE), text_input, priority)
+}
+
+pub fn add_note_in(db_path: &Path, text_input: &str, priority: Priority) -> Result<u64> {
+    let mut conn = open_connection(db_path)?;
 
     diesel::insert_into(notes::table)
         .values((
@@ -177,7 +192,16 @@ pub fn list_notes(
     contains: Option<&str>,
     priority: Option<Priority>,
 ) -> Result<Vec<Note>> {
-    let mut conn = open_connection()?;
+    list_notes_in(Path::new(DEFAULT_DB_FILE), status, contains, priority)
+}
+
+pub fn list_notes_in(
+    db_path: &Path,
+    status: NoteStatusFilter,
+    contains: Option<&str>,
+    priority: Option<Priority>,
+) -> Result<Vec<Note>> {
+    let mut conn = open_connection(db_path)?;
 
     let mut query = notes_dsl::notes
         .select((
@@ -221,9 +245,12 @@ pub fn list_notes(
 
     Ok(notes)
 }
-
 pub fn mark_note_done(target_id: u64) -> Result<()> {
-    let mut conn = open_connection()?;
+    mark_note_done_in(Path::new(DEFAULT_DB_FILE), target_id)
+}
+
+pub fn mark_note_done_in(db_path: &Path, target_id: u64) -> Result<()> {
+    let mut conn = open_connection(db_path)?;
     let db_id = i64::try_from(target_id).map_err(|_| AppError::InvalidId(target_id))?;
 
     let changed = diesel::update(notes_dsl::notes.filter(notes_dsl::id.eq(db_id)))
@@ -243,7 +270,11 @@ pub fn mark_note_done(target_id: u64) -> Result<()> {
 }
 
 pub fn edit_note_text(target_id: u64, new_text: &str) -> Result<()> {
-    let mut conn = open_connection()?;
+    edit_note_text_in(Path::new(DEFAULT_DB_FILE), target_id, new_text)
+}
+
+pub fn edit_note_text_in(db_path: &Path, target_id: u64, new_text: &str) -> Result<()> {
+    let mut conn = open_connection(db_path)?;
     let db_id = i64::try_from(target_id).map_err(|_| AppError::InvalidId(target_id))?;
 
     let changed = diesel::update(notes_dsl::notes.filter(notes_dsl::id.eq(db_id)))
@@ -263,7 +294,11 @@ pub fn edit_note_text(target_id: u64, new_text: &str) -> Result<()> {
 }
 
 pub fn remove_note_by_id(target_id: u64) -> Result<()> {
-    let mut conn = open_connection()?;
+    remove_note_by_id_in(Path::new(DEFAULT_DB_FILE), target_id)
+}
+
+pub fn remove_note_by_id_in(db_path: &Path, target_id: u64) -> Result<()> {
+    let mut conn = open_connection(db_path)?;
     let db_id = i64::try_from(target_id).map_err(|_| AppError::InvalidId(target_id))?;
 
     let changed =
@@ -277,7 +312,11 @@ pub fn remove_note_by_id(target_id: u64) -> Result<()> {
 }
 
 pub fn set_note_priority(target_id: u64, priority: Priority) -> Result<()> {
-    let mut conn = open_connection()?;
+    set_note_priority_in(Path::new(DEFAULT_DB_FILE), target_id, priority)
+}
+
+pub fn set_note_priority_in(db_path: &Path, target_id: u64, priority: Priority) -> Result<()> {
+    let mut conn = open_connection(db_path)?;
     let db_id = i64::try_from(target_id).map_err(|_| AppError::InvalidId(target_id))?;
 
     let changed = diesel::update(notes_dsl::notes.filter(notes_dsl::id.eq(db_id)))
