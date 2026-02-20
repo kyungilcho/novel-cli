@@ -1,6 +1,19 @@
-# Tauri + React + Typescript
+# Tauri + React + TypeScript (Rsbuild)
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+This app uses Tauri + React + TypeScript with Rsbuild (powered by Rspack).
+
+## Why Rsbuild (Rspack)
+
+We chose Rsbuild (Rspack) over Vite for this desktop app.
+
+- Better scalability as the project grows.
+- Faster incremental rebuilds and production builds in our workload.
+- Webpack-compatible ecosystem for future plugin/loader customization.
+- Works cleanly with Tauri's fixed dev URL and static dist output.
+
+Trade-off:
+
+- Vite can feel simpler for very small apps, but we prioritize growth and build performance.
 
 ## Recommended IDE Setup
 
