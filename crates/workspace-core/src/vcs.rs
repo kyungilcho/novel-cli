@@ -2,7 +2,6 @@
 // std::path::Path: 문자열이 아닌 "경로 타입"으로 인자를 받기 위해 사용
 use std::{fs, path::Path};
 
-use diesel::query_dsl::methods::FilterDsl;
 use diesel::select;
 // Diesel에서 자주 쓰는 trait/함수(prelude)를 한 번에 가져온다
 use diesel::{dsl::exists, prelude::*};
@@ -13,6 +12,7 @@ use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 // Tauri IPC/JSON 직렬화를 위해 struct에 Serialize derive를 붙인다
 use serde::Serialize;
 
+use crate::schema::node_parents;
 // crate 루트(lib.rs)에서 선언한 공통 Result/에러 타입을 가져온다
 use crate::{Result, WorkSpaceError};
 
@@ -64,14 +64,107 @@ pub fn init_repo(root: &Path) -> Result<()> {
     Ok(())
 }
 
-// 미구현 API 스텁. 인자명 앞에 '_'를 붙여 현재 미사용 경고를 막는다.
-pub fn commit(_root: &Path, _message: &str) -> Result<NodeId> {
-    Err(not_implemented("commit"))
+pub fn commit(root: &Path, message: &str) -> Result<NodeId> {
+    use crate::schema::head::dsl as head_dsl;
+    use crate::schema::node_parents::dsl as node_parents_dsl;
+    use crate::schema::nodes::dsl as nodes_dsl;
+
+    let message_text = message.trim();
+
+    if message_text.is_empty() {
+        return Err(WorkSpaceError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "empty commit message",
+        )));
+    }
+
+    let mut conn = open_connection(root)?;
+    conn.run_pending_migrations(MIGRATIONS).map_err(to_io)?;
+
+    let new_id = conn
+        .transaction::<NodeId, diesel::result::Error, _>(|tx| {
+            let created_at_ms = now_unix_ms();
+
+            let current_head = head_dsl::head
+                .select(head_dsl::node_id)
+                .first::<Option<String>>(tx)
+                .optional()?
+                .flatten();
+
+            let new_id = new_node_id(message_text, current_head.as_deref(), created_at_ms);
+
+            diesel::insert_into(nodes_dsl::nodes)
+                .values((
+                    nodes_dsl::id.eq(&new_id),
+                    nodes_dsl::message.eq(message_text),
+                    nodes_dsl::created_at_unix_ms.eq(created_at_ms),
+                ))
+                .execute(tx)?;
+
+            if let Some(parent_id) = current_head {
+                diesel::insert_into(node_parents_dsl::node_parents)
+                    .values((
+                        node_parents_dsl::node_id.eq(&new_id),
+                        node_parents_dsl::parent_id.eq(parent_id),
+                        node_parents_dsl::ord.eq(0),
+                    ))
+                    .execute(tx)?;
+            }
+
+            diesel::update(head_dsl::head)
+                .set(head_dsl::node_id.eq(Some(new_id.clone())))
+                .execute(tx)?;
+
+            Ok(new_id)
+        })
+        .map_err(to_io)?;
+
+    Ok(new_id)
+}
+
+#[derive(Debug, Queryable)]
+pub struct NodeRow {
+    pub id: String,
+    pub message: String,
+    pub created_at_unix_ms: i64,
 }
 
 // 로그 조회 API 스텁
-pub fn log(_root: &Path) -> Result<Vec<VersionNode>> {
-    Err(not_implemented("log"))
+pub fn log(root: &Path) -> Result<Vec<VersionNode>> {
+    use crate::schema::nodes::dsl as nodes_dsl;
+
+    let mut conn = open_connection(root)?;
+    conn.run_pending_migrations(MIGRATIONS).map_err(to_io)?;
+
+    let node_rows = nodes_dsl::nodes
+        .select((
+            nodes_dsl::id,
+            nodes_dsl::message,
+            nodes_dsl::created_at_unix_ms,
+        ))
+        .order(nodes_dsl::created_at_unix_ms.desc())
+        .load::<NodeRow>(&mut conn)
+        .map_err(to_io)?;
+
+    let mut out: Vec<VersionNode> = Vec::with_capacity(node_rows.len());
+
+    for row in node_rows {
+        let parents = node_parents::dsl::node_parents
+            .filter(node_parents::dsl::node_id.eq(&row.id))
+            .select(node_parents::dsl::parent_id)
+            .order(node_parents::dsl::ord.asc())
+            .load::<String>(&mut conn)
+            .map_err(to_io)?;
+
+        out.push(VersionNode {
+            id: row.id,
+            message: row.message,
+            created_at_unix_ms: row.created_at_unix_ms,
+            parents,
+        });
+    }
+
+    Ok(out)
 }
 
 // 저장소 상태 조회:
@@ -173,9 +266,26 @@ fn to_io(e: impl std::fmt::Display) -> WorkSpaceError {
 }
 
 // 아직 구현되지 않은 기능에 대해 일관된 Unsupported 에러를 만든다
-fn not_implemented(op: &str) -> WorkSpaceError {
-    WorkSpaceError::Io(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        format!("{op} is not implemented"),
-    ))
+fn new_node_id(msg_text: &str, parent: Option<&str>, created_at_ms: i64) -> NodeId {
+    use sha2::{Digest, Sha256};
+
+    let mut hasher = Sha256::new();
+
+    hasher.update("v1\n");
+    hasher.update(msg_text.as_bytes());
+    hasher.update("\n");
+    hasher.update(created_at_ms.to_string().as_bytes());
+    hasher.update("\n");
+    if let Some(p) = parent {
+        hasher.update(p.as_bytes());
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn now_unix_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
 }
