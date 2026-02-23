@@ -96,27 +96,43 @@ CLI test:
 cargo test -p novel-cli
 ```
 
-## Roadmap
+## Roadmap (Updated: 2026-02-22)
 
-Phase 1:
+현재 전략:
 
-- 안정적인 파일 편집/저장 루프 구축
-- 프로젝트 열기/파일 탐색 UX 정리
+- 엔진은 Git-like 그래프 버전관리
+- UI는 비개발자 친화 용어 중심(예: Snapshot, Restore)
+- 버전 단위는 "소설 본문 + 리서치 + 아이데이션 + 캐릭터/세계관/타임라인" 전체
 
-Phase 2:
+Phase 1 (Current): Workspace Foundation
 
-- Git commit/branch/checkout를 UI에서 실행
-- 변경 상태(Modified, Staged 등) 표시
+- 프로젝트 열기/파일 탐색/읽기/쓰기/파일 생성 안정화
+- 기본 저장공간 분리(app data workspace)
+- `workspace-core` 파일 연산 테스트 안정화
 
-Phase 3:
+Phase 2 (Current Next): VCS Core Skeleton
 
-- Commit DAG 그래프 뷰
-- 선택 커밋 기준 diff/restore
+- `init_repo`, `repo_state`, `commit`, `checkout`, `log` 최소 동작 완성
+- SQLite migration + schema 버전 관리 고정
+- HEAD 이동/기본 노드 그래프 무결성 검증
 
-Phase 4:
+Phase 3: Snapshot Engine
 
-- 소설 전용 기능(장면 태그, 등장인물 링크, 플롯 체크)
-- 집필 생산성 기능(단축키/명령 팔레트/검색 강화)
+- 실제 파일 상태 스냅샷 저장(`blobs`, `node_files`)
+- 특정 노드 checkout 시 파일 상태 복원
+- commit 간 텍스트 diff v1 제공
+
+Phase 4: Writing Domain Layers
+
+- 아티팩트 타입 통합: manuscript/research/ideation/characters/world/timeline
+- 스냅샷을 아티팩트 관점으로 필터링/조회
+- 복원 전 미리보기 UX
+
+Phase 5: Writer UX + Graph Experience
+
+- 비개발자 용어 중심 히스토리/분기 UX
+- 분기 실험(대안 플롯) 생성/비교/병합 UX
+- 단축키/검색/명령 팔레트 등 생산성 강화
 
 ## License
 
