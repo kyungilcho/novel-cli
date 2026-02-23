@@ -29,7 +29,7 @@ type ActivityItem = {
 const ACTIVITY_ITEMS: ActivityItem[] = [
     { id: "explorer", title: "Explorer", icon: "folder_copy" },
     { id: "search", title: "Search", icon: "search" },
-    { id: "history", title: "History", icon: "source_environment", hasDot: true },
+    { id: "history", title: "History", icon: "history", hasDot: true },
     { id: "lab", title: "Lab", icon: "science" },
 ];
 

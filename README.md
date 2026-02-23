@@ -58,6 +58,19 @@
 - Versioning: Git (Rust에서 명령/라이브러리 래핑)
 - Metadata: SQLite (프로젝트 메타데이터, UI 상태 등)
 
+## UI Design Reference
+
+Desktop UI는 사용자가 제공한 Stitch 시안(HTML) 기준으로 VS Code 스타일 셸을 타겟으로 한다.
+
+- Activity Bar (좌측 50px)
+- Explorer / Source Control Sidebar
+- Editor Workspace (Tabs + Breadcrumb + Editor + Minimap)
+- Status Bar (하단)
+
+핵심 토큰/레이아웃/컴포넌트 규칙은 아래 문서에 정리했다.
+
+- `docs/design-reference.md`
+
 ## VCS Data Model & Flow
 
 현재 `workspace-core` VCS는 "그래프 이력"과 "파일 스냅샷"을 분리해서 저장한다.
