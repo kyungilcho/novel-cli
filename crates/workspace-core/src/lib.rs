@@ -5,6 +5,10 @@ use std::{
 
 use serde::Serialize;
 
+pub mod vcs;
+pub use vcs::*;
+pub mod schema;
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectInfo {
     pub root: PathBuf,

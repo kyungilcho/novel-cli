@@ -1,7 +1,7 @@
 use std::io::ErrorKind;
 use std::{fs, path::PathBuf};
 use workspace_core::{
-    WorkSpaceError, create_file, list_files, read_file, resolve_path, write_file,
+    WorkSpaceError, checkout, create_file, list_files, read_file, resolve_path, write_file,
 };
 
 fn setup() -> (tempfile::TempDir, std::path::PathBuf) {
@@ -83,4 +83,12 @@ fn create_file_fails_for_duplicated_name() {
     create_file(&root, ".", "memo.txt").unwrap();
     let err = create_file(&root, ".", "memo.txt").unwrap_err();
     assert!(matches!(err, WorkSpaceError::Io(ref e) if e.kind() == ErrorKind::AlreadyExists));
+}
+
+#[test]
+fn checkout_unknown_node_returns_error() {
+    let (_td, root) = setup();
+
+    let err = checkout(&root, "unknown").unwrap_err();
+    assert!(matches!(err, WorkSpaceError::Io(ref e) if e.kind() == ErrorKind::NotFound));
 }
