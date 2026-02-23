@@ -416,3 +416,32 @@ fn blob_id_for_content(content: &[u8]) -> String {
     hasher.update(content);
     hex::encode(hasher.finalize())
 }
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiffKind {
+    Added,
+    Removed,
+    Modified,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct FileDiff {
+    pub path: String,
+    pub kind: DiffKind,
+    pub before_text: Option<String>,
+    pub after_text: Option<String>,
+    pub unified: Option<String>,
+    pub is_binary: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NodeDiff {
+    pub from: String,
+    pub to: String,
+    pub files: Vec<FileDiff>,
+}
+
+pub fn diff_nodes(_root: &std::path::Path, _from: &str, _to: &str) -> Result<NodeDiff> {
+    todo!("implement diff_nodes");
+}
