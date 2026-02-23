@@ -1,4 +1,4 @@
-use workspace_core::{Result, commit, init_repo, log, repo_state};
+use workspace_core::{Result, checkout, commit, init_repo, log, repo_state};
 
 fn setup() -> (tempfile::TempDir, std::path::PathBuf) {
     let td = tempfile::tempdir().unwrap();
@@ -66,6 +66,54 @@ fn commit_rejects_empty_message() -> Result<()> {
     assert!(
         matches!(first_commit_err, workspace_core::WorkSpaceError::Io(ref e) if e.kind() == std::io::ErrorKind::InvalidInput)
     );
+
+    Ok(())
+}
+
+#[test]
+fn checkout_restores_file_contents() -> Result<()> {
+    let (_td, root) = setup();
+
+    init_repo(&root)?;
+
+    let file_path = root.join("hello.txt");
+    std::fs::write(&file_path, "hello world")?;
+
+    let first_commit_id = commit(&root, "initial commit")?;
+
+    std::fs::remove_file(&file_path)?;
+
+    assert!(!file_path.exists());
+
+    commit(&root, "second commit")?;
+
+    checkout(&root, &first_commit_id)?;
+
+    let content = std::fs::read_to_string(&file_path)?;
+    assert_eq!(content, "hello world");
+
+    Ok(())
+}
+
+#[test]
+fn checkout_removes_files_not_in_target_snapshot() -> Result<()> {
+    let (_td, root) = setup();
+
+    init_repo(&root)?;
+
+    let first_commit_id = commit(&root, "initial commit")?;
+
+    let file_a = root.join("a.txt");
+
+    std::fs::write(&file_a, "hello")?;
+
+    commit(&root, "second commit")?;
+
+    assert!(file_a.exists());
+
+    checkout(&root, &first_commit_id)?;
+
+    assert!(!file_a.exists());
 
     Ok(())
 }

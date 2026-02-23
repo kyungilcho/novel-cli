@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 // std::fs: 디렉토리 생성 같은 파일시스템 작업에 사용
 // std::path::Path: 문자열이 아닌 "경로 타입"으로 인자를 받기 위해 사용
 use std::{fs, path::Path};
@@ -81,6 +82,23 @@ pub fn commit(root: &Path, message: &str) -> Result<NodeId> {
     let mut conn = open_connection(root)?;
     conn.run_pending_migrations(MIGRATIONS).map_err(to_io)?;
 
+    let files = collect_files_in_workspace(root)?;
+    let mut snapshot_files = Vec::with_capacity(files.len());
+
+    for rel in files {
+        let abs = root.join(&rel);
+
+        let content = fs::read(&abs).map_err(to_io)?;
+
+        let blob_id = blob_id_for_content(&content);
+
+        snapshot_files.push(SnapshotFile {
+            path: normalize_rel_path(&rel),
+            blob_id,
+            content,
+        });
+    }
+
     let new_id = conn
         .transaction::<NodeId, diesel::result::Error, _>(|tx| {
             let created_at_ms = now_unix_ms();
@@ -114,6 +132,28 @@ pub fn commit(root: &Path, message: &str) -> Result<NodeId> {
             diesel::update(head_dsl::head)
                 .set(head_dsl::node_id.eq(Some(new_id.clone())))
                 .execute(tx)?;
+
+            use crate::schema::blobs::dsl as blobs_dsl;
+            use crate::schema::node_files::dsl as node_files_dsl;
+
+            for file in &snapshot_files {
+                diesel::insert_into(blobs_dsl::blobs)
+                    .values((
+                        blobs_dsl::id.eq(&file.blob_id),
+                        blobs_dsl::content.eq(&file.content),
+                    ))
+                    .on_conflict(blobs_dsl::id)
+                    .do_nothing()
+                    .execute(tx)?;
+
+                diesel::insert_into(node_files_dsl::node_files)
+                    .values((
+                        node_files_dsl::node_id.eq(&new_id),
+                        node_files_dsl::path.eq(&file.path),
+                        node_files_dsl::blob_id.eq(&file.blob_id),
+                    ))
+                    .execute(tx)?;
+            }
 
             Ok(new_id)
         })
@@ -202,8 +242,10 @@ pub fn repo_state(root: &Path) -> Result<RepoState> {
 }
 
 // 체크아웃 API 스텁
-pub fn checkout(root: &Path, node_id: &str) -> Result<()> {
+pub fn checkout(root: &Path, target_node_id: &str) -> Result<()> {
+    use crate::schema::blobs::dsl as blobs_dsl;
     use crate::schema::head::dsl as head_dsl;
+    use crate::schema::node_files::dsl as node_files_dsl;
     use crate::schema::nodes::dsl as nodes_dsl;
 
     let mut conn = open_connection(root)?;
@@ -211,7 +253,7 @@ pub fn checkout(root: &Path, node_id: &str) -> Result<()> {
 
     let node_exists = select(exists(diesel::QueryDsl::filter(
         nodes_dsl::nodes,
-        nodes_dsl::id.eq(node_id),
+        nodes_dsl::id.eq(target_node_id),
     )))
     .get_result::<bool>(&mut conn)
     .map_err(to_io)?;
@@ -219,12 +261,44 @@ pub fn checkout(root: &Path, node_id: &str) -> Result<()> {
     if !node_exists {
         return Err(WorkSpaceError::Io(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("node not found: {}", node_id),
+            format!("node not found: {}", target_node_id),
         )));
     }
 
+    let rows = node_files_dsl::node_files
+        .inner_join(blobs_dsl::blobs.on(node_files_dsl::blob_id.eq(blobs_dsl::id)))
+        .filter(node_files_dsl::node_id.eq(target_node_id))
+        .select((node_files_dsl::path, blobs_dsl::content))
+        .load::<(String, Vec<u8>)>(&mut conn)
+        .map_err(to_io)?;
+
+    let canonical_root = root.canonicalize()?;
+    let current = collect_files_in_workspace(&canonical_root)?
+        .into_iter()
+        .map(|p| normalize_rel_path(&p))
+        .collect::<std::collections::HashSet<_>>();
+
+    let target = rows
+        .iter()
+        .map(|(p, _)| p.clone())
+        .collect::<std::collections::HashSet<_>>();
+
+    for rel in current.difference(&target) {
+        let abs = canonical_root.join(rel);
+        fs::remove_file(abs)?;
+    }
+
+    for (rel, content) in rows {
+        let abs = canonical_root.join(rel);
+
+        if let Some(parent) = abs.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(abs, content)?;
+    }
+
     diesel::update(head_dsl::head)
-        .set(head_dsl::node_id.eq(Some(node_id.to_string())))
+        .set(head_dsl::node_id.eq(Some(target_node_id.to_string())))
         .execute(&mut conn)
         .map_err(to_io)?;
 
@@ -288,4 +362,57 @@ fn now_unix_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis() as i64
+}
+
+fn collect_files_recursive(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+
+        let path = entry.path();
+
+        let file_type = entry.file_type()?;
+
+        if file_type.is_dir() {
+            if path.file_name().and_then(|n| n.to_str()) == Some(".novel") {
+                continue;
+            }
+            collect_files_recursive(root, &path, out)?;
+        }
+
+        if file_type.is_file() {
+            let rel = path
+                .strip_prefix(root)
+                .map_err(|_| WorkSpaceError::PathOutsideRoot(path.clone()))?;
+            out.push(rel.to_path_buf());
+        }
+    }
+
+    Ok(())
+}
+
+fn collect_files_in_workspace(root: &Path) -> Result<Vec<PathBuf>> {
+    let canonical_root = root.canonicalize()?;
+    let mut out = Vec::new();
+    collect_files_recursive(&canonical_root, &canonical_root, &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+#[derive(Debug, Clone)]
+struct SnapshotFile {
+    path: String,
+    blob_id: String,
+    content: Vec<u8>,
+}
+
+fn normalize_rel_path(p: &Path) -> String {
+    p.to_string_lossy().replace("\\", "/")
+}
+
+fn blob_id_for_content(content: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(b"blob ");
+    hasher.update(content);
+    hex::encode(hasher.finalize())
 }

@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS node_files;
+DROP TABLE IF EXISTS blobs;

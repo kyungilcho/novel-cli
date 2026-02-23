@@ -12,4 +12,4 @@ export const readFile = (root: string, rel: string) =>
 export const writeFile = (root: string, rel: string, content: string) =>
     invoke("write_file", { root, rel, content });
 export const createFile = (root: string, rel: string, name: string) =>
-    invoke("create_file", { root, rel, name });
+    invoke<string>("create_file", { root, rel, name });

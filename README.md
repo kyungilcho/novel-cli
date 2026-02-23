@@ -58,6 +58,60 @@
 - Versioning: Git (Rust에서 명령/라이브러리 래핑)
 - Metadata: SQLite (프로젝트 메타데이터, UI 상태 등)
 
+## VCS Data Model & Flow
+
+현재 `workspace-core` VCS는 "그래프 이력"과 "파일 스냅샷"을 분리해서 저장한다.
+
+- 그래프 이력: `nodes`, `node_parents`, `head`
+- 파일 스냅샷: `blobs`, `node_files`
+
+```mermaid
+flowchart LR
+    H["head(singleton=1, node_id nullable)"] -->|"current pointer"| N["nodes(id, message, created_at_unix_ms)"]
+    N -->|"child-parent edges"| NP["node_parents(node_id, parent_id, ord)"]
+    NP -->|"parent_id -> nodes.id"| N
+    N -->|"snapshot files per node"| NF["node_files(node_id, path, blob_id)"]
+    NF -->|"blob_id -> blobs.id"| B["blobs(id, content)"]
+```
+
+`commit` 동작:
+
+1. 워크스페이스 파일 수집(`.novel` 제외)
+2. 각 파일 content 해시로 `blob_id` 계산
+3. 트랜잭션 안에서 `nodes`/`node_parents`/`blobs`/`node_files` 기록
+4. `head`를 새 노드로 이동
+
+```mermaid
+flowchart TD
+    A["Scan workspace files"] --> B["Read file bytes"]
+    B --> C["Compute blob_id(hash(content))"]
+    C --> D["BEGIN TX"]
+    D --> E["Insert node"]
+    E --> F["Insert parent edge(if head exists)"]
+    F --> G["Upsert blobs(on conflict do nothing)"]
+    G --> H["Insert node_files(path -> blob_id)"]
+    H --> I["Update head"]
+    I --> J["COMMIT TX"]
+```
+
+`checkout` 동작:
+
+1. 대상 노드 존재 검증
+2. `node_files + blobs` 조인으로 대상 스냅샷 로드
+3. 현재 파일 집합과 대상 파일 집합 비교
+4. 필요 파일 삭제/복원
+5. `head`를 대상 노드로 이동
+
+```mermaid
+flowchart TD
+    A["Validate target node"] --> B["Load snapshot rows(path, content)"]
+    B --> C["Build current file set"]
+    C --> D["Build target file set"]
+    D --> E["Delete current - target"]
+    E --> F["Write target files"]
+    F --> G["Update head"]
+```
+
 ## Development
 
 Prerequisites:

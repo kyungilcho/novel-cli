@@ -56,6 +56,11 @@ pub fn run() {
             commands::file::read_file,
             commands::file::write_file,
             commands::file::create_file,
+            commands::vcs::init_repo,
+            commands::vcs::commit,
+            commands::vcs::log,
+            commands::vcs::repo_state,
+            commands::vcs::checkout,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
