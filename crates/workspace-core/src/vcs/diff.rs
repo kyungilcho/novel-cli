@@ -83,6 +83,14 @@ fn decode_utf(bytes: &[u8]) -> Option<String> {
     std::str::from_utf8(bytes).ok().map(ToString::to_string)
 }
 
+fn normalize_text_for_line_diff(text: &str) -> String {
+    let mut normalized = text.replace("\r\n", "\n");
+    if !normalized.ends_with('\n') {
+        normalized.push('\n');
+    }
+    normalized
+}
+
 fn build_file_diff(
     path: String,
     kind: DiffKind,
@@ -107,7 +115,9 @@ fn build_file_diff(
 
     let unified =
         if let (Some(before), Some(after)) = (before_text.as_deref(), after_text.as_deref()) {
-            let diff = similar::TextDiff::from_lines(before, after);
+            let before_normalized = normalize_text_for_line_diff(before);
+            let after_normalized = normalize_text_for_line_diff(after);
+            let diff = similar::TextDiff::from_lines(&before_normalized, &after_normalized);
             Some(diff.unified_diff().to_string())
         } else {
             None

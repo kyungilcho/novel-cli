@@ -9,13 +9,14 @@ import { createFile, listFiles, readFile, writeFile } from "./lib/api/fileApi";
 import {
     checkoutSnapshot,
     commitSnapshot,
+    diffNodes,
     fetchLog,
     fetchRepoState,
     initRepo,
 } from "./lib/api/vcsApi";
 import type { ProjectInfo } from "./lib/api/projectApi";
 import type { FileEntry } from "./lib/api/fileApi";
-import type { RepoState, VersionNode } from "./lib/api/vcsApi";
+import type { NodeDiff, RepoState, VersionNode } from "./lib/api/vcsApi";
 
 type CursorPosition = {
     line: number;
@@ -65,6 +66,19 @@ export default function App() {
     const [logNodes, setLogNodes] = useState<VersionNode[]>([]);
     const [commitMessage, setCommitMessage] = useState("");
     const [vcsBusy, setVcsBusy] = useState(false);
+    const [expandedNodeId, setExpandedNodeId] = useState("");
+    const [loadingNodeId, setLoadingNodeId] = useState("");
+    const [nodeDiffCache, setNodeDiffCache] = useState<Record<string, NodeDiff>>({});
+    const [diffResult, setDiffResult] = useState<NodeDiff | null>(null);
+    const [selectedDiffPath, setSelectedDiffPath] = useState("");
+
+    const clearHistoryDiffState = () => {
+        setExpandedNodeId("");
+        setLoadingNodeId("");
+        setNodeDiffCache({});
+        setDiffResult(null);
+        setSelectedDiffPath("");
+    };
 
     const resetEditor = () => {
         setSelectedPath("");
@@ -72,6 +86,7 @@ export default function App() {
         setSavedContent("");
         setOpenTabs([]);
         setCursor({ line: 1, col: 1 });
+        clearHistoryDiffState();
     };
 
     const refreshWorkspaceFiles = async (rootPath: string) => {
@@ -166,6 +181,7 @@ export default function App() {
         setVcsBusy(true);
         try {
             await refreshVcs(project.root);
+            clearHistoryDiffState();
         } catch (e) {
             setError(String(e));
         } finally {
@@ -185,6 +201,8 @@ export default function App() {
             setCursor({ line: 1, col: 1 });
             setOpenTabs((prev) => (prev.includes(path) ? prev : [...prev, path]));
             setSidebarOpen(false);
+            setDiffResult(null);
+            setSelectedDiffPath("");
         } catch (e) {
             setError(String(e));
         }
@@ -255,6 +273,7 @@ export default function App() {
             setCommitMessage("");
             await refreshVcs(project.root);
             await refreshWorkspaceFiles(project.root);
+            clearHistoryDiffState();
         } catch (e) {
             setError(String(e));
         } finally {
@@ -289,11 +308,60 @@ export default function App() {
             }
 
             await refreshVcs(project.root);
+            clearHistoryDiffState();
         } catch (e) {
             setError(String(e));
         } finally {
             setVcsBusy(false);
         }
+    };
+
+    const onToggleNodeExpand = async (node: VersionNode) => {
+        if (!project) return;
+
+        if (expandedNodeId === node.id) {
+            setExpandedNodeId("");
+            setDiffResult(null);
+            setSelectedDiffPath("");
+            return;
+        }
+
+        setExpandedNodeId(node.id);
+        setDiffResult(null);
+        setSelectedDiffPath("");
+
+        const previousNodeId = node.parents[0];
+        if (!previousNodeId) {
+            return;
+        }
+
+        if (nodeDiffCache[node.id]) {
+            return;
+        }
+
+        setError("");
+        setLoadingNodeId(node.id);
+        try {
+            const result = await diffNodes(project.root, previousNodeId, node.id);
+            setNodeDiffCache((prev) => ({ ...prev, [node.id]: result }));
+        } catch (e) {
+            setError(String(e));
+        } finally {
+            setLoadingNodeId((prev) => (prev === node.id ? "" : prev));
+        }
+    };
+
+    const onSelectExpandedDiffFile = (nodeId: string, path: string) => {
+        const result = nodeDiffCache[nodeId];
+        if (!result) return;
+
+        setDiffResult(result);
+        setSelectedDiffPath(path);
+    };
+
+    const onClearDiff = () => {
+        setDiffResult(null);
+        setSelectedDiffPath("");
     };
 
     const onCloseTab = (path: string) => {
@@ -362,6 +430,8 @@ export default function App() {
     const language = selectedPath ? inferLanguage(selectedPath) : "Plain Text";
     const minimapViewportTop = lineCount > 1 ? Math.min(92, ((cursor.line - 1) / (lineCount - 1)) * 92) : 0;
     const headShort = vcsState?.head ? vcsState.head.slice(0, 8) : "-";
+    const expandedDiff = expandedNodeId ? nodeDiffCache[expandedNodeId] ?? null : null;
+    const activeDiffToNodeId = diffResult?.to ?? "";
 
     return (
         <main className="app-shell" data-sidebar={sidebarOpen ? "open" : "closed"}>
@@ -377,7 +447,14 @@ export default function App() {
                         vcsState={vcsState}
                         logNodes={logNodes}
                         commitMessage={commitMessage}
+                        expandedNodeId={expandedNodeId}
+                        expandedDiff={expandedDiff}
+                        loadingNodeId={loadingNodeId}
+                        selectedDiffPath={selectedDiffPath}
+                        activeDiffToNodeId={activeDiffToNodeId}
                         onCommitMessageChange={setCommitMessage}
+                        onToggleNodeExpand={onToggleNodeExpand}
+                        onSelectExpandedDiffFile={onSelectExpandedDiffFile}
                         onCommitSnapshot={onCommitSnapshot}
                         onRefreshVcs={onRefreshVcs}
                         onCheckoutSnapshot={onCheckoutSnapshot}
@@ -414,6 +491,9 @@ export default function App() {
                 lineNumbers={lineNumbers}
                 minimapRows={minimapRows}
                 minimapViewportTop={minimapViewportTop}
+                diffResult={diffResult}
+                selectedDiffPath={selectedDiffPath}
+                onExitDiff={onClearDiff}
                 onRead={onRead}
                 onCloseTab={onCloseTab}
                 onEditorChange={onEditorChange}
