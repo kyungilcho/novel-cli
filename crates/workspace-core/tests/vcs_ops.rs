@@ -1,4 +1,4 @@
-use workspace_core::{Result, checkout, commit, init_repo, log, repo_state};
+use workspace_core::{DiffKind, Result, checkout, commit, diff_nodes, init_repo, log, repo_state};
 
 fn setup() -> (tempfile::TempDir, std::path::PathBuf) {
     let td = tempfile::tempdir().unwrap();
@@ -114,6 +114,167 @@ fn checkout_removes_files_not_in_target_snapshot() -> Result<()> {
     checkout(&root, &first_commit_id)?;
 
     assert!(!file_a.exists());
+
+    Ok(())
+}
+
+#[test]
+fn diff_nodes_return_added() -> Result<()> {
+    let (_td, root) = setup();
+
+    init_repo(&root)?;
+
+    let first_commit_id = commit(&root, "initial commit")?;
+
+    let file_path = root.join("hello.txt");
+    std::fs::write(&file_path, "hello world")?;
+
+    let second_commit_id = commit(&root, "second commit")?;
+
+    let diff = diff_nodes(&root, &first_commit_id, &second_commit_id)?;
+
+    assert_eq!(diff.files.len(), 1);
+    assert_eq!(diff.files[0].kind, DiffKind::Added);
+    assert_eq!(diff.files[0].path, "hello.txt");
+    assert_eq!(diff.files[0].before_text, None);
+    assert_eq!(diff.files[0].after_text, Some("hello world".to_string()));
+
+    Ok(())
+}
+
+#[test]
+fn diff_nodes_return_removed() -> Result<()> {
+    let (_td, root) = setup();
+
+    init_repo(&root)?;
+
+    let file_path = root.join("hello.txt");
+    std::fs::write(&file_path, "hello world")?;
+
+    let first_commit_id = commit(&root, "initial commit")?;
+
+    std::fs::remove_file(&file_path)?;
+
+    let second_commit_id = commit(&root, "second commit")?;
+
+    let diff = diff_nodes(&root, &first_commit_id, &second_commit_id)?;
+
+    assert_eq!(diff.files.len(), 1);
+    assert_eq!(diff.files[0].kind, DiffKind::Removed);
+    assert_eq!(diff.files[0].path, "hello.txt");
+    assert_eq!(diff.files[0].before_text, Some("hello world".to_string()));
+    assert_eq!(diff.files[0].after_text, None);
+
+    Ok(())
+}
+
+#[test]
+fn diff_nodes_return_modified() -> Result<()> {
+    let (_td, root) = setup();
+
+    init_repo(&root)?;
+
+    let file_path = root.join("hello.txt");
+    std::fs::write(&file_path, "hello world")?;
+
+    let first_commit_id = commit(&root, "initial commit")?;
+
+    std::fs::write(&file_path, "hello world modified")?;
+
+    let second_commit_id = commit(&root, "second commit")?;
+
+    let diff = diff_nodes(&root, &first_commit_id, &second_commit_id)?;
+
+    assert_eq!(diff.files.len(), 1);
+    assert_eq!(diff.files[0].kind, DiffKind::Modified);
+    assert_eq!(diff.files[0].path, "hello.txt");
+    assert_eq!(diff.files[0].before_text, Some("hello world".to_string()));
+    assert_eq!(
+        diff.files[0].after_text,
+        Some("hello world modified".to_string())
+    );
+    assert_eq!(diff.files[0].unified, Some("@@ -1 +1 @@\n-hello world\n\\ No newline at end of file\n+hello world modified\n\\ No newline at end of file\n".to_string()));
+
+    Ok(())
+}
+
+#[test]
+fn diff_nodes_return_no_diff() -> Result<()> {
+    let (_td, root) = setup();
+
+    init_repo(&root)?;
+
+    let file_path = root.join("hello.txt");
+    std::fs::write(&file_path, "hello world")?;
+
+    let first_commit_id = commit(&root, "initial commit")?;
+
+    let second_commit_id = commit(&root, "second commit")?;
+
+    let diff = diff_nodes(&root, &first_commit_id, &second_commit_id)?;
+
+    assert_eq!(diff.files.len(), 0);
+
+    Ok(())
+}
+
+#[test]
+fn diff_nodes_rejects_nonexistent_to_node() -> Result<()> {
+    let (_td, root) = setup();
+
+    init_repo(&root)?;
+
+    let first_commit_id = commit(&root, "initial commit")?;
+
+    let diff_error = diff_nodes(&root, &first_commit_id, "nonexistent").unwrap_err();
+
+    assert!(
+        matches!(diff_error, workspace_core::WorkSpaceError::Io(ref e) if e.kind() == std::io::ErrorKind::NotFound)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn diff_nodes_rejects_nonexistent_from_node() -> Result<()> {
+    let (_td, root) = setup();
+
+    init_repo(&root)?;
+
+    let first_commit_id = commit(&root, "initial commit")?;
+
+    let diff_error = diff_nodes(&root, "nonexistent", &first_commit_id).unwrap_err();
+
+    assert!(
+        matches!(diff_error, workspace_core::WorkSpaceError::Io(ref e) if e.kind() == std::io::ErrorKind::NotFound)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn binary_file_diff_is_detected() -> Result<()> {
+    let (_td, root) = setup();
+
+    init_repo(&root)?;
+
+    let file_path = root.join("binary.bin");
+    std::fs::write(&file_path, &[0u8, 1, 2, 3])?;
+
+    let first_commit_id = commit(&root, "initial commit")?;
+
+    std::fs::write(&file_path, &[0u8, 1, 2, 3, 4])?;
+
+    let second_commit_id = commit(&root, "second commit")?;
+
+    let diff = diff_nodes(&root, &first_commit_id, &second_commit_id)?;
+
+    assert_eq!(diff.files.len(), 1);
+    assert_eq!(diff.files[0].kind, DiffKind::Modified);
+    assert_eq!(diff.files[0].path, "binary.bin");
+    assert_eq!(diff.files[0].before_text, None);
+    assert_eq!(diff.files[0].after_text, None);
+    assert_eq!(diff.files[0].unified, None);
 
     Ok(())
 }

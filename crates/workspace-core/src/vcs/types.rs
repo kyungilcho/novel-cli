@@ -25,7 +25,7 @@ pub struct RepoState {
     pub node_count: usize,
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DiffKind {
     Added,
