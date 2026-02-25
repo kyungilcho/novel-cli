@@ -45,7 +45,7 @@ export const commitSnapshot = (root: string, message: string) =>
     invoke<string>("commit", { root, message });
 
 export const checkoutSnapshot = (root: string, nodeId: string) =>
-    invoke<void>("checkout", { root, node_id: nodeId });
+    invoke<void>("checkout", { root, nodeId });
 
 export const diffNodes = (root: string, from: string, to: string) =>
     invoke<NodeDiff>("diff_nodes", { root, from, to });
