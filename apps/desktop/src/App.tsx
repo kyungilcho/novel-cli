@@ -1,4 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import { ActivityBar, type ActivityView } from "./components/layout/ActivityBar";
+import { EditorPane } from "./components/layout/EditorPane";
+import { ExplorerPanel } from "./components/layout/ExplorerPanel";
+import { HistoryPanel } from "./components/layout/HistoryPanel";
+import { StatusBar } from "./components/layout/StatusBar";
 import { defaultWorkspaceRoot, openProject } from "./lib/api/projectApi";
 import { createFile, listFiles, readFile, writeFile } from "./lib/api/fileApi";
 import {
@@ -12,26 +17,10 @@ import type { ProjectInfo } from "./lib/api/projectApi";
 import type { FileEntry } from "./lib/api/fileApi";
 import type { RepoState, VersionNode } from "./lib/api/vcsApi";
 
-type ActivityView = "explorer" | "search" | "history" | "lab";
-
 type CursorPosition = {
     line: number;
     col: number;
 };
-
-type ActivityItem = {
-    id: ActivityView;
-    title: string;
-    icon: string;
-    hasDot?: boolean;
-};
-
-const ACTIVITY_ITEMS: ActivityItem[] = [
-    { id: "explorer", title: "Explorer", icon: "folder_copy" },
-    { id: "search", title: "Search", icon: "search" },
-    { id: "history", title: "History", icon: "history", hasDot: true },
-    { id: "lab", title: "Lab", icon: "science" },
-];
 
 function cursorFromText(text: string, offset: number): CursorPosition {
     const safeOffset = Math.max(0, Math.min(offset, text.length));
@@ -57,30 +46,6 @@ function inferLanguage(path: string): string {
     if (path.endsWith(".json")) return "JSON";
     if (path.endsWith(".txt")) return "Plain Text";
     return "Text";
-}
-
-function basename(path: string): string {
-    const parts = path.split(/[\\/]/).filter(Boolean);
-    return parts.length > 0 ? parts[parts.length - 1] : path;
-}
-
-function iconNameForPath(path: string, isDir: boolean): string {
-    if (isDir) return "folder";
-    if (path.endsWith(".json")) return "data_object";
-    if (path.endsWith(".md")) return "description";
-    return "article";
-}
-
-function iconToneClass(path: string, isDir: boolean): string {
-    if (isDir) return "tone-folder";
-    if (path.endsWith(".json")) return "tone-json";
-    if (path.endsWith(".md")) return "tone-md";
-    return "tone-story";
-}
-
-function formatNodeTime(unixMs: number): string {
-    const d = new Date(unixMs);
-    return d.toLocaleString();
 }
 
 export default function App() {
@@ -400,31 +365,7 @@ export default function App() {
 
     return (
         <main className="app-shell" data-sidebar={sidebarOpen ? "open" : "closed"}>
-            <aside className="activity-bar">
-                <div className="activity-list">
-                    {ACTIVITY_ITEMS.map((item) => (
-                        <button
-                            key={item.id}
-                            type="button"
-                            className={`activity-btn ${activeView === item.id ? "is-active" : ""}`}
-                            onClick={() => onSelectActivity(item.id)}
-                            title={item.title}
-                        >
-                            <span className="material-symbols-outlined activity-icon">{item.icon}</span>
-                            {item.hasDot && <span className="activity-dot" />}
-                        </button>
-                    ))}
-
-                    <div className="activity-spacer" />
-
-                    <button type="button" className="activity-btn" title="Account">
-                        <span className="material-symbols-outlined activity-icon">account_circle</span>
-                    </button>
-                    <button type="button" className="activity-btn" title="Settings">
-                        <span className="material-symbols-outlined activity-icon">settings</span>
-                    </button>
-                </div>
-            </aside>
+            <ActivityBar activeView={activeView} onSelectActivity={onSelectActivity} />
 
             <aside className="explorer-panel">
                 <div className="explorer-header">
@@ -432,314 +373,63 @@ export default function App() {
                 </div>
 
                 {activeView === "history" ? (
-                    <>
-                        <div className="explorer-section">
-                            <span className="material-symbols-outlined section-chevron">chevron_right</span>
-                            <span className="section-title">SNAPSHOTS</span>
-                        </div>
-                        <div className="history-controls">
-                            <div className="history-stats mono">
-                                <span>{`HEAD: ${vcsState?.head ? vcsState.head.slice(0, 8) : "-"}`}</span>
-                                <span>{`COMMITS: ${vcsState?.node_count ?? 0}`}</span>
-                            </div>
-                            <textarea
-                                className="ui-textarea history-message"
-                                placeholder="snapshot message..."
-                                value={commitMessage}
-                                onChange={(e) => setCommitMessage(e.currentTarget.value)}
-                                disabled={!project || vcsBusy}
-                                rows={3}
-                            />
-                            <div className="explorer-controls-row">
-                                <button
-                                    type="button"
-                                    className="ui-button is-primary"
-                                    onClick={() => void onCommitSnapshot()}
-                                    disabled={!project || vcsBusy || !commitMessage.trim()}
-                                >
-                                    Commit
-                                </button>
-                                <button
-                                    type="button"
-                                    className="ui-button"
-                                    onClick={() => void onRefreshVcs()}
-                                    disabled={!project || vcsBusy}
-                                >
-                                    Refresh Log
-                                </button>
-                            </div>
-                        </div>
-                        <div className="explorer-scroll">
-                            {logNodes.length === 0 && (
-                                <div className="tree-row is-disabled">No snapshots yet</div>
-                            )}
-                            {logNodes.map((node) => {
-                                const isHead = vcsState?.head === node.id;
-                                return (
-                                    <div key={node.id} className={`history-item${isHead ? " is-head" : ""}`}>
-                                        <div className="history-item-top">
-                                            <span className="history-item-id mono">{node.id.slice(0, 8)}</span>
-                                            <button
-                                                type="button"
-                                                className="ui-button history-item-btn"
-                                                onClick={() => void onCheckoutSnapshot(node.id)}
-                                                disabled={!project || vcsBusy || isHead}
-                                            >
-                                                {isHead ? "Current" : "Checkout"}
-                                            </button>
-                                        </div>
-                                        <div className="history-item-message">{node.message}</div>
-                                        <div className="history-item-meta mono">
-                                            {formatNodeTime(node.created_at_unix_ms)}
-                                        </div>
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </>
+                    <HistoryPanel
+                        vcsState={vcsState}
+                        logNodes={logNodes}
+                        commitMessage={commitMessage}
+                        onCommitMessageChange={setCommitMessage}
+                        onCommitSnapshot={onCommitSnapshot}
+                        onRefreshVcs={onRefreshVcs}
+                        onCheckoutSnapshot={onCheckoutSnapshot}
+                        hasProject={project !== null}
+                        vcsBusy={vcsBusy}
+                    />
                 ) : (
-                    <>
-                        <div className="explorer-section">
-                            <span className="material-symbols-outlined section-chevron">chevron_right</span>
-                            <span className="section-title">SRC</span>
-                        </div>
-                        <div className="explorer-controls">
-                            <input
-                                className="ui-input mono"
-                                placeholder="absolute project root path"
-                                value={inputRoot}
-                                onChange={(e) => setInputRoot(e.currentTarget.value)}
-                            />
-                            <div className="explorer-controls-row">
-                                <button type="button" className="ui-button" onClick={onUseIsolatedRoot}>
-                                    Isolated
-                                </button>
-                                <button type="button" className="ui-button is-primary" onClick={onOpenProject}>
-                                    Open
-                                </button>
-                                <button
-                                    type="button"
-                                    className="ui-button"
-                                    onClick={onRefreshFiles}
-                                    disabled={!project}
-                                >
-                                    Refresh
-                                </button>
-                            </div>
-                            <div className="explorer-controls-row">
-                                <input
-                                    className="ui-input"
-                                    placeholder="new file name"
-                                    value={newFileName}
-                                    onChange={(e) => setNewFileName(e.currentTarget.value)}
-                                    disabled={!project}
-                                />
-                                <button
-                                    type="button"
-                                    className="ui-button"
-                                    onClick={onCreateFile}
-                                    disabled={!project || !newFileName.trim()}
-                                >
-                                    +
-                                </button>
-                            </div>
-                        </div>
-                        {project && <div className="explorer-note mono">{project.root}</div>}
-                        <div className="explorer-scroll">
-                            {sortedFiles.length === 0 && (
-                                <div className="tree-row is-disabled">No files in root</div>
-                            )}
-                            {sortedFiles.map((f) => {
-                                const isActive = selectedPath === f.path;
-                                const rowClassName =
-                                    `tree-row${isActive ? " is-active" : ""}${f.is_dir ? " is-disabled" : ""}`;
-                                const iconName = iconNameForPath(f.path, f.is_dir);
-                                const iconTone = iconToneClass(f.path, f.is_dir);
-
-                                return (
-                                    <div
-                                        key={`${f.path}-${f.is_dir ? "d" : "f"}`}
-                                        className={rowClassName}
-                                        onClick={() => {
-                                            if (!f.is_dir) {
-                                                void onRead(f.path);
-                                            }
-                                        }}
-                                    >
-                                        <span className="material-symbols-outlined tree-chevron">
-                                            {f.is_dir ? "chevron_right" : ""}
-                                        </span>
-                                        <span className={`material-symbols-outlined tree-icon ${iconTone}`}>
-                                            {iconName}
-                                        </span>
-                                        <span className="tree-label">{basename(f.path)}</span>
-                                        {isActive && isDirty && <span className="tree-modified">M</span>}
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </>
+                    <ExplorerPanel
+                        inputRoot={inputRoot}
+                        onInputRootChange={setInputRoot}
+                        newFileName={newFileName}
+                        onNewFileNameChange={setNewFileName}
+                        hasProject={project !== null}
+                        projectRoot={project?.root ?? null}
+                        selectedPath={selectedPath}
+                        isDirty={isDirty}
+                        sortedFiles={sortedFiles}
+                        onUseIsolatedRoot={onUseIsolatedRoot}
+                        onOpenProject={onOpenProject}
+                        onRefreshFiles={onRefreshFiles}
+                        onCreateFile={onCreateFile}
+                        onRead={onRead}
+                    />
                 )}
             </aside>
 
-            <section className="workspace-panel">
-                <div className="tab-strip">
-                    {openTabs.length === 0 && (
-                        <div className="tab is-active">
-                            <span className="material-symbols-outlined tab-icon tone-story">article</span>
-                            <span className="tab-title">untitled.story</span>
-                        </div>
-                    )}
-                    {openTabs.map((tabPath) => (
-                        <button
-                            key={tabPath}
-                            type="button"
-                            className={`tab ${selectedPath === tabPath ? "is-active" : ""}`}
-                            onClick={() => {
-                                if (selectedPath !== tabPath) {
-                                    void onRead(tabPath);
-                                }
-                            }}
-                        >
-                            <span
-                                className={`material-symbols-outlined tab-icon ${iconToneClass(tabPath, false)}`}
-                            >
-                                {iconNameForPath(tabPath, false)}
-                            </span>
-                            <span className="tab-title">{basename(tabPath)}</span>
-                            <span
-                                className="tab-close"
-                                onClick={(e) => {
-                                    e.stopPropagation();
-                                    onCloseTab(tabPath);
-                                }}
-                            >
-                                <span className="material-symbols-outlined tab-close-icon">close</span>
-                            </span>
-                        </button>
-                    ))}
-                </div>
+            <EditorPane
+                openTabs={openTabs}
+                selectedPath={selectedPath}
+                content={content}
+                breadcrumbs={breadcrumbs}
+                isDirty={isDirty}
+                cursor={cursor}
+                lineNumbers={lineNumbers}
+                minimapRows={minimapRows}
+                minimapViewportTop={minimapViewportTop}
+                onRead={onRead}
+                onCloseTab={onCloseTab}
+                onEditorChange={onEditorChange}
+                onEditorSelect={onEditorSelect}
+            />
 
-                <div className="breadcrumb-bar">
-                    {breadcrumbs.length === 0 && <span>No file selected</span>}
-                    {breadcrumbs.map((part, idx) => (
-                        <span key={`${part}-${idx}`}>
-                            {idx > 0 && (
-                                <span className="material-symbols-outlined breadcrumb-icon">chevron_right</span>
-                            )}
-                            <span>{part}</span>
-                        </span>
-                    ))}
-                    {isDirty && <span className="breadcrumb-sep">*</span>}
-                </div>
-
-                <div className="editor-main">
-                    <div className="gutter">
-                        {lineNumbers.map((n) => (
-                            <div
-                                key={`line-${n}`}
-                                className={`gutter-line ${n === cursor.line ? "is-active" : ""}`}
-                            >
-                                {n}
-                            </div>
-                        ))}
-                    </div>
-
-                    <div className="editor-scroll">
-                        {!selectedPath && (
-                            <div className="empty-state">
-                                <div className="material-symbols-outlined empty-icon">article</div>
-                                <div>Open a file to start writing.</div>
-                            </div>
-                        )}
-                        {selectedPath && (
-                            <textarea
-                                className="ui-textarea mono editor-textarea"
-                                value={content}
-                                onChange={(e) =>
-                                    onEditorChange(
-                                        e.currentTarget.value,
-                                        e.currentTarget.selectionStart ?? 0,
-                                    )
-                                }
-                                onKeyUp={(e) =>
-                                    onEditorSelect(
-                                        e.currentTarget.value,
-                                        e.currentTarget.selectionStart ?? 0,
-                                    )
-                                }
-                                onClick={(e) =>
-                                    onEditorSelect(
-                                        e.currentTarget.value,
-                                        e.currentTarget.selectionStart ?? 0,
-                                    )
-                                }
-                                onSelect={(e) =>
-                                    onEditorSelect(
-                                        e.currentTarget.value,
-                                        e.currentTarget.selectionStart ?? 0,
-                                    )
-                                }
-                                spellCheck={false}
-                            />
-                        )}
-                    </div>
-
-                    <div className="minimap">
-                        <div className="minimap-inner">
-                            {minimapRows.map((w, idx) => (
-                                <div
-                                    key={`mini-${idx}`}
-                                    className="minimap-line"
-                                    style={{ width: `${w}%` }}
-                                />
-                            ))}
-                            <div className="minimap-viewport" style={{ top: `${minimapViewportTop}%` }} />
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            <footer className="status-bar">
-                <div className="status-group">
-                    <button type="button" className="status-item status-button">
-                        <span className="material-symbols-outlined status-icon">alt_route</span>
-                        <span>{`main@${headShort}${isDirty ? "*" : ""}`}</span>
-                    </button>
-                    <button type="button" className="status-item status-button" onClick={onRefreshFiles}>
-                        <span className="material-symbols-outlined status-icon">sync</span>
-                    </button>
-                    <button
-                        type="button"
-                        className="status-item status-button"
-                        onClick={onSave}
-                        disabled={!selectedPath}
-                    >
-                        Save
-                    </button>
-                    <span className="status-item">
-                        <span className="material-symbols-outlined status-icon">cancel</span>
-                        <span>0</span>
-                    </span>
-                    <span className="status-item">
-                        <span className="material-symbols-outlined status-icon">warning</span>
-                        <span>0</span>
-                    </span>
-                    <span className="status-item">{`#${vcsState?.node_count ?? 0}`}</span>
-                </div>
-
-                <div className="status-group">
-                    <span className="status-item">{`Ln ${cursor.line}, Col ${cursor.col}`}</span>
-                    <span className="status-item">UTF-8</span>
-                    <span className="status-item">
-                        <span className="material-symbols-outlined status-icon">code</span>
-                        <span>{language}</span>
-                    </span>
-                    <span className="status-item">
-                        <span className="material-symbols-outlined status-icon">notifications</span>
-                    </span>
-                </div>
-            </footer>
+            <StatusBar
+                headShort={headShort}
+                isDirty={isDirty}
+                nodeCount={vcsState?.node_count ?? 0}
+                cursor={cursor}
+                language={language}
+                canSave={selectedPath !== ""}
+                onRefreshFiles={onRefreshFiles}
+                onSave={onSave}
+            />
 
             {!!error && (
                 <div className="status-toast" role="alert">
