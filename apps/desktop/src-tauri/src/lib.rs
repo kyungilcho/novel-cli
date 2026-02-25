@@ -61,6 +61,7 @@ pub fn run() {
             commands::vcs::log,
             commands::vcs::repo_state,
             commands::vcs::checkout,
+            commands::vcs::diff_nodes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

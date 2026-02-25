@@ -12,6 +12,27 @@ export type VersionNode = {
     created_at_unix_ms: number;
 };
 
+export enum DiffKind {
+    Added = "added",
+    Removed = "removed",
+    Modified = "modified",
+}
+
+export type FileDiff = {
+    path: string;
+    before_text: string | null;
+    after_text: string | null;
+    unified: string | null;
+    kind: DiffKind;
+    is_binary: boolean;
+};
+
+export type NodeDiff = {
+    from: string;
+    to: string;
+    files: FileDiff[];
+};
+
 export const initRepo = (root: string) => invoke<void>("init_repo", { root });
 
 export const fetchRepoState = (root: string) =>
@@ -24,4 +45,7 @@ export const commitSnapshot = (root: string, message: string) =>
     invoke<string>("commit", { root, message });
 
 export const checkoutSnapshot = (root: string, nodeId: string) =>
-    invoke<void>("checkout", { root, nodeId, node_id: nodeId });
+    invoke<void>("checkout", { root, node_id: nodeId });
+
+export const diffNodes = (root: string, from: string, to: string) =>
+    invoke<NodeDiff>("diff_nodes", { root, from, to });
